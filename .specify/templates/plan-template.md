@@ -47,7 +47,17 @@
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+### Code Quality Check
+- [ ] Implementation approach follows TDD principles (tests written first)
+- [ ] Performance requirements defined (database <100ms, UI <200ms, 60fps animations)
+- [ ] Security considerations documented (input validation, data protection)
+- [ ] Accessibility requirements specified (WCAG 2.1 AA compliance)
+
+### Technical Standards Verification
+- [ ] Test coverage plan meets 85% minimum requirement
+- [ ] Performance benchmarks defined for this feature
+- [ ] Error handling strategy documented
+- [ ] Data integrity measures specified
 
 ## Project Structure
 
@@ -209,4 +219,4 @@ ios/ or android/
 - [ ] Complexity deviations documented
 
 ---
-*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
+*Based on Constitution v1.0.0 - See `.specify/memory/constitution.md`*
