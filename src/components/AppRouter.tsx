@@ -120,10 +120,17 @@ export function AppRouter() {
             <h1 className="text-4xl font-bold text-gray-900 mb-2">🎯 Trivia Party</h1>
             <p className="text-gray-600">Multi-user trivia game for in-person play</p>
           </div>
-          <AuthForms onSuccess={() => {
-            // Will be handled by auth state change
-            setCurrentView('host-menu') // Default to host menu, will update when auth state changes
-          }} />
+          <AuthForms
+            onSuccess={() => {
+              // Allow auth state change effect to route based on role while preserving deep links
+              setCurrentView((previous) => {
+                if (previous === 'player-join' || previous === 'tv-display' || previous === 'host-dashboard' || previous === 'leaderboard') {
+                  return previous
+                }
+                return 'auth'
+              })
+            }}
+          />
         </div>
       </div>
     )
