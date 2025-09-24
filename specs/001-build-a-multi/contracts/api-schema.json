@@ -1,0 +1,462 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Trivia Game API",
+    "version": "1.0.0",
+    "description": "REST API contracts for multi-user trivia game functionality"
+  },
+  "servers": [
+    {
+      "url": "https://[project-id].supabase.co/rest/v1",
+      "description": "Supabase REST API"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Game": {
+        "type": "object",
+        "required": ["id", "host_id", "title", "status", "current_round", "current_question", "max_rounds", "questions_per_round"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "host_id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "minLength": 3, "maxLength": 100 },
+          "status": { "type": "string", "enum": ["setup", "active", "paused", "completed"] },
+          "current_round": { "type": "integer", "minimum": 1 },
+          "current_question": { "type": "integer", "minimum": 1 },
+          "max_rounds": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "questions_per_round": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "started_at": { "type": "string", "format": "date-time", "nullable": true },
+          "ended_at": { "type": "string", "format": "date-time", "nullable": true },
+          "settings": { "$ref": "#/components/schemas/GameSettings" }
+        }
+      },
+      "GameSettings": {
+        "type": "object",
+        "properties": {
+          "allowLateJoins": { "type": "boolean", "default": true },
+          "timePerQuestion": { "type": "integer", "minimum": 0, "default": 0 },
+          "pointsPerCorrect": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+          "categories": { "type": "array", "items": { "type": "string" } },
+          "difficulty": { "type": "string" }
+        }
+      },
+      "Team": {
+        "type": "object",
+        "required": ["id", "game_id", "name", "join_code", "score"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "game_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string", "minLength": 2, "maxLength": 30 },
+          "join_code": { "type": "string", "pattern": "^[A-Z0-9]{6}$" },
+          "captain_id": { "type": "string", "format": "uuid", "nullable": true },
+          "score": { "type": "integer", "minimum": 0 },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Player": {
+        "type": "object",
+        "required": ["id", "game_id", "display_name", "is_online"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "user_id": { "type": "string", "format": "uuid", "nullable": true },
+          "game_id": { "type": "string", "format": "uuid" },
+          "team_id": { "type": "string", "format": "uuid", "nullable": true },
+          "display_name": { "type": "string", "minLength": 2, "maxLength": 20 },
+          "is_online": { "type": "boolean" },
+          "joined_at": { "type": "string", "format": "date-time" },
+          "last_seen": { "type": "string", "format": "date-time" }
+        }
+      },
+      "GameQuestion": {
+        "type": "object",
+        "required": ["id", "game_id", "question_id", "round_number", "question_order", "shuffled_answers", "correct_position"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "game_id": { "type": "string", "format": "uuid" },
+          "question_id": { "type": "string", "format": "uuid" },
+          "round_number": { "type": "integer", "minimum": 1 },
+          "question_order": { "type": "integer", "minimum": 1 },
+          "shuffled_answers": { "type": "array", "items": { "type": "string" }, "minItems": 4, "maxItems": 4 },
+          "correct_position": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "displayed_at": { "type": "string", "format": "date-time", "nullable": true },
+          "completed_at": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "Answer": {
+        "type": "object",
+        "required": ["id", "game_id", "team_id", "game_question_id", "selected_position", "is_correct", "points_earned", "submitted_by"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "game_id": { "type": "string", "format": "uuid" },
+          "team_id": { "type": "string", "format": "uuid" },
+          "game_question_id": { "type": "string", "format": "uuid" },
+          "selected_position": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "is_correct": { "type": "boolean" },
+          "points_earned": { "type": "integer", "minimum": 0 },
+          "submitted_at": { "type": "string", "format": "date-time" },
+          "submitted_by": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CreateGameRequest": {
+        "type": "object",
+        "required": ["title", "max_rounds", "questions_per_round"],
+        "properties": {
+          "title": { "type": "string", "minLength": 3, "maxLength": 100 },
+          "max_rounds": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "questions_per_round": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "settings": { "$ref": "#/components/schemas/GameSettings" }
+        }
+      },
+      "CreateTeamRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 30 }
+        }
+      },
+      "JoinGameRequest": {
+        "type": "object",
+        "required": ["display_name"],
+        "properties": {
+          "display_name": { "type": "string", "minLength": 2, "maxLength": 20 },
+          "team_join_code": { "type": "string", "pattern": "^[A-Z0-9]{6}$" }
+        }
+      },
+      "SubmitAnswerRequest": {
+        "type": "object",
+        "required": ["selected_position"],
+        "properties": {
+          "selected_position": { "type": "integer", "minimum": 0, "maximum": 3 }
+        }
+      },
+      "GameStateUpdate": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["question_displayed", "question_completed", "round_completed", "game_completed", "team_answered"] },
+          "game_id": { "type": "string", "format": "uuid" },
+          "round_number": { "type": "integer", "minimum": 1 },
+          "question_order": { "type": "integer", "minimum": 1 },
+          "team_id": { "type": "string", "format": "uuid" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/games": {
+      "post": {
+        "summary": "Create a new game",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateGameRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Game created successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Game" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request data" },
+          "401": { "description": "Authentication required" }
+        }
+      },
+      "get": {
+        "summary": "List games for current user",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["setup", "active", "paused", "completed"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of games",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Game" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Authentication required" }
+        }
+      }
+    },
+    "/games/{gameId}": {
+      "get": {
+        "summary": "Get game details",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Game details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Game" }
+              }
+            }
+          },
+          "404": { "description": "Game not found" }
+        }
+      },
+      "patch": {
+        "summary": "Update game (host only)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": { "type": "string", "enum": ["active", "paused", "completed"] },
+                  "current_round": { "type": "integer", "minimum": 1 },
+                  "current_question": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Game updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Game" }
+              }
+            }
+          },
+          "403": { "description": "Host access required" },
+          "404": { "description": "Game not found" }
+        }
+      }
+    },
+    "/games/{gameId}/join": {
+      "post": {
+        "summary": "Join a game as player",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/JoinGameRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successfully joined game",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Player" }
+              }
+            }
+          },
+          "400": { "description": "Invalid join request" },
+          "404": { "description": "Game not found" },
+          "409": { "description": "Display name already taken" }
+        }
+      }
+    },
+    "/games/{gameId}/teams": {
+      "get": {
+        "summary": "List teams in game",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of teams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Team" }
+                }
+              }
+            }
+          },
+          "404": { "description": "Game not found" }
+        }
+      },
+      "post": {
+        "summary": "Create a team",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateTeamRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Team created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Team" }
+              }
+            }
+          },
+          "400": { "description": "Invalid team data" },
+          "409": { "description": "Team name already exists" }
+        }
+      }
+    },
+    "/games/{gameId}/questions/current": {
+      "get": {
+        "summary": "Get current question for game",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current question",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GameQuestion" }
+              }
+            }
+          },
+          "404": { "description": "No current question" }
+        }
+      }
+    },
+    "/games/{gameId}/questions/{questionId}/answer": {
+      "post": {
+        "summary": "Submit answer for team",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "questionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitAnswerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Answer submitted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Answer" }
+              }
+            }
+          },
+          "400": { "description": "Invalid answer" },
+          "409": { "description": "Team already answered" },
+          "403": { "description": "Not a team member" }
+        }
+      }
+    },
+    "/games/{gameId}/leaderboard": {
+      "get": {
+        "summary": "Get current leaderboard",
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Leaderboard data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "team": { "$ref": "#/components/schemas/Team" },
+                      "rank": { "type": "integer", "minimum": 1 },
+                      "total_score": { "type": "integer" },
+                      "correct_answers": { "type": "integer" },
+                      "total_answers": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Game not found" }
+        }
+      }
+    }
+  }
+}
