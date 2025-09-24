@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { TeamService } from '../services/teamService'
 import { PlayerService } from '../services/playerService'
+import { supabase } from '../lib/supabase'
 import type { Game } from '../types/game'
 import type { Team } from '../types/team'
 import type { Player, PlayerWithPresence } from '../types/player'
@@ -61,8 +62,35 @@ export const TeamManager: React.FC<TeamManagerProps> = ({
 
   useEffect(() => {
     loadTeamData()
-    const interval = setInterval(loadTeamData, 5000) // Refresh every 5 seconds
-    return () => clearInterval(interval)
+
+    // Set up realtime subscriptions
+    const teamChannel = supabase.channel(`team-manager:${team.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'players',
+        filter: `team_id=eq.${team.id}`
+      }, (payload) => {
+        console.log('Team manager - player update received:', payload)
+        loadTeamData()
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'teams',
+        filter: `id=eq.${team.id}`
+      }, (payload) => {
+        console.log('Team manager - team update received:', payload)
+        if (payload.eventType === 'UPDATE' && onTeamUpdated) {
+          onTeamUpdated(payload.new as Team)
+        }
+        loadTeamData()
+      })
+      .subscribe()
+
+    return () => {
+      teamChannel.unsubscribe()
+    }
   }, [team.id])
 
   const loadTeamData = async () => {

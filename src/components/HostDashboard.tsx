@@ -24,6 +24,7 @@ import { GameService } from '../services/gameService'
 import { TeamService } from '../services/teamService'
 import { QuestionService } from '../services/questionService'
 import { AnswerService } from '../services/answerService'
+import { supabase } from '../lib/supabase'
 import { isDemoMode, demoGame, demoTeams, demoLeaderboard, demoCurrentQuestion, demoAnswerBreakdown, createDemoResponse } from '../lib/demoData'
 import type { Game } from '../types/game'
 import type { Team, LeaderboardEntry } from '../types/team'
@@ -46,8 +47,62 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
 
   useEffect(() => {
     loadGameData()
-    const interval = setInterval(loadGameData, 5000) // Refresh every 5 seconds
-    return () => clearInterval(interval)
+
+    // Set up realtime subscriptions
+    const gameChannel = supabase.channel(`host-dashboard:${gameId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'games',
+        filter: `id=eq.${gameId}`
+      }, (payload) => {
+        console.log('Host dashboard - game update received:', payload)
+        if (payload.eventType === 'UPDATE') {
+          setGame(payload.new as Game)
+        }
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'teams',
+        filter: `game_id=eq.${gameId}`
+      }, async (payload) => {
+        console.log('Host dashboard - team update received:', payload)
+        const [teamsResponse, leaderboardResponse] = await Promise.all([
+          TeamService.getGameTeams(gameId),
+          TeamService.getLeaderboard(gameId)
+        ])
+        if (teamsResponse.data) setTeams(teamsResponse.data)
+        if (leaderboardResponse.data) setLeaderboard(leaderboardResponse.data)
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'answers'
+      }, async (payload) => {
+        console.log('Host dashboard - answer update received:', payload)
+        const leaderboardResponse = await TeamService.getLeaderboard(gameId)
+        if (leaderboardResponse.data) {
+          setLeaderboard(leaderboardResponse.data)
+        }
+        loadAnswerBreakdown()
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'game_questions',
+        filter: `game_id=eq.${gameId}`
+      }, (payload) => {
+        console.log('Host dashboard - question update received:', payload)
+        if (game && game.status === 'active') {
+          loadCurrentQuestion()
+        }
+      })
+      .subscribe()
+
+    return () => {
+      gameChannel.unsubscribe()
+    }
   }, [gameId])
 
   useEffect(() => {

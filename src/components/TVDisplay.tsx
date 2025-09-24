@@ -15,6 +15,7 @@ import {
 import { GameService } from '../services/gameService'
 import { TeamService } from '../services/teamService'
 import { QuestionService } from '../services/questionService'
+import { supabase } from '../lib/supabase'
 import type { Game } from '../types/game'
 import type { LeaderboardEntry } from '../types/team'
 import type { QuestionWithAnswers } from '../types/question'
@@ -35,8 +36,63 @@ export const TVDisplay: React.FC<TVDisplayProps> = ({ gameId }) => {
 
   useEffect(() => {
     loadGameData()
-    const interval = setInterval(loadGameData, 2000) // Refresh every 2 seconds for real-time updates
-    return () => clearInterval(interval)
+
+    // Set up realtime subscriptions
+    const gameChannel = supabase.channel(`game:${gameId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'games',
+        filter: `id=eq.${gameId}`
+      }, (payload) => {
+        console.log('Game update received:', payload)
+        if (payload.eventType === 'UPDATE') {
+          setGame(payload.new as Game)
+        }
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'game_questions',
+        filter: `game_id=eq.${gameId}`
+      }, (payload) => {
+        console.log('Game question update received:', payload)
+        if (game && game.status === 'active') {
+          loadCurrentQuestion()
+        }
+      })
+      .subscribe()
+
+    const leaderboardChannel = supabase.channel(`leaderboard:${gameId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'teams',
+        filter: `game_id=eq.${gameId}`
+      }, async (payload) => {
+        console.log('Team update received:', payload)
+        const leaderboardResponse = await TeamService.getLeaderboard(gameId)
+        if (leaderboardResponse.data) {
+          setLeaderboard(leaderboardResponse.data)
+        }
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'answers'
+      }, async (payload) => {
+        console.log('Answer update received:', payload)
+        const leaderboardResponse = await TeamService.getLeaderboard(gameId)
+        if (leaderboardResponse.data) {
+          setLeaderboard(leaderboardResponse.data)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      gameChannel.unsubscribe()
+      leaderboardChannel.unsubscribe()
+    }
   }, [gameId])
 
   useEffect(() => {

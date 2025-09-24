@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { TeamService } from '../services/teamService'
 import { AnswerService } from '../services/answerService'
+import { supabase } from '../lib/supabase'
 import type { Game } from '../types/game'
 import type { LeaderboardEntry } from '../types/team'
 
@@ -44,8 +45,30 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
     loadLeaderboard()
 
     if (autoRefresh) {
-      const interval = setInterval(loadLeaderboard, 3000) // Refresh every 3 seconds
-      return () => clearInterval(interval)
+      // Set up realtime subscriptions
+      const leaderboardChannel = supabase.channel(`leaderboard-component:${game.id}`)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'teams',
+          filter: `game_id=eq.${game.id}`
+        }, async (payload) => {
+          console.log('Leaderboard - team update received:', payload)
+          loadLeaderboard()
+        })
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'answers'
+        }, async (payload) => {
+          console.log('Leaderboard - answer update received:', payload)
+          loadLeaderboard()
+        })
+        .subscribe()
+
+      return () => {
+        leaderboardChannel.unsubscribe()
+      }
     }
   }, [game.id, autoRefresh])
 
