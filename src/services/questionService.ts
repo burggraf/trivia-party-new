@@ -211,6 +211,46 @@ export class QuestionService {
   // Get game question with randomized answers
   static async getGameQuestion(gameId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<QuestionWithAnswers>> {
     try {
+      const { data: existing, error: fetchError } = await supabase
+        .from('game_questions')
+        .select('id')
+        .eq('game_id', gameId)
+
+      if (fetchError) {
+        return {
+          data: null,
+          error: { message: fetchError.message, code: 'DATABASE_ERROR', details: fetchError }
+        }
+      }
+
+      if (!existing || existing.length === 0) {
+        return { data: true, error: null }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('game_questions')
+        .delete()
+        .eq('game_id', gameId)
+
+      if (deleteError) {
+        return {
+          data: null,
+          error: { message: deleteError.message, code: 'DATABASE_ERROR', details: deleteError }
+        }
+      }
+
+      return { data: true, error: null }
+    } catch (error) {
+      return {
+        data: null,
+        error: { message: 'Failed to clear existing game questions', code: 'UNKNOWN_ERROR', details: error }
+      }
+    }
+  }
+
+  // Get game question with randomized answers
+  static async getGameQuestion(gameId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<QuestionWithAnswers>> {
+    try {
       const fetchQuestion = (positionField: 'question_order' | 'question_number') => (
         supabase
           .from('game_questions')
