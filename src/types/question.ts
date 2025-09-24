@@ -22,10 +22,12 @@ export interface GameQuestion {
   question_id: string
   round_number: number
   question_order: number
+  question_number?: number | null
   shuffled_answers: string[]
   correct_position: number // 0-3 index in shuffled_answers
   displayed_at: string | null
   completed_at: string | null
+  time_limit?: number | null
 }
 
 // Answer submission
