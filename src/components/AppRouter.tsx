@@ -9,11 +9,14 @@ import { Leaderboard } from './Leaderboard'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Alert, AlertDescription } from './ui/alert'
-import { RefreshCw } from 'lucide-react'
+import { Badge } from './ui/badge'
+import { RefreshCw, Copy, Check, ExternalLink, Monitor } from 'lucide-react'
 import { GameService } from '../services/gameService'
 import type { Game } from '../types/game'
 
 type ViewType = 'auth' | 'host-menu' | 'host-create' | 'host-dashboard' | 'tv-display' | 'player-join' | 'leaderboard'
+
+const LAST_GAME_STORAGE_KEY = 'trivia-party:last-game-id'
 
 export function AppRouter() {
   const { user, loading, signOut, isHost, isPlayer } = useAuth()
@@ -22,6 +25,14 @@ export function AppRouter() {
   const [currentGame, setCurrentGame] = useState<Game | null>(null)
   const [gameLoading, setGameLoading] = useState(false)
   const [gameError, setGameError] = useState<string | null>(null)
+  const [hostGames, setHostGames] = useState<Game[]>([])
+  const [hostGamesLoading, setHostGamesLoading] = useState(false)
+  const [hostGamesError, setHostGamesError] = useState<string | null>(null)
+  const [copiedJoinLink, setCopiedJoinLink] = useState(false)
+
+  const joinLink = React.useMemo(() => (
+    currentGameId ? `${window.location.origin}/join/${currentGameId}` : ''
+  ), [currentGameId])
 
   // Check for special URLs on initial load
   React.useEffect(() => {
@@ -52,6 +63,22 @@ export function AppRouter() {
     }
   }, [])
 
+  const hasRestoredGame = React.useRef(false)
+
+  React.useEffect(() => {
+    if (hasRestoredGame.current) return
+    if (currentGameId) {
+      hasRestoredGame.current = true
+      return
+    }
+
+    const savedGameId = window.localStorage.getItem(LAST_GAME_STORAGE_KEY)
+    if (savedGameId) {
+      setCurrentGameId(savedGameId)
+    }
+    hasRestoredGame.current = true
+  }, [currentGameId])
+
   React.useEffect(() => {
     if (!currentGameId) {
       setCurrentGame(null)
@@ -72,6 +99,9 @@ export function AppRouter() {
           setCurrentGame(null)
           if (response.error) {
             setGameError(response.error.message)
+            if (response.error.details?.code === 'PGRST116') {
+              setCurrentGameId(null)
+            }
           }
         }
       })
@@ -89,6 +119,58 @@ export function AppRouter() {
       active = false
     }
   }, [currentGameId])
+
+  const loadHostGames = React.useCallback(async () => {
+    if (!isHost) return
+
+    setHostGamesLoading(true)
+    setHostGamesError(null)
+
+    try {
+      const response = await GameService.getHostGames()
+      if (response.data) {
+        setHostGames(response.data)
+
+        const prioritizedGame = response.data.find((game) => game.status === 'active')
+          || response.data.find((game) => game.status === 'setup')
+          || response.data[0]
+
+        setCurrentGameId(prev => {
+          if (prev || !prioritizedGame) return prev
+          return prioritizedGame.id
+        })
+      } else if (response.error) {
+        setHostGamesError(response.error.message)
+      }
+    } catch (error) {
+      console.error('Failed to load host games', error)
+      setHostGamesError('Failed to load your games')
+    } finally {
+      setHostGamesLoading(false)
+    }
+  }, [isHost])
+
+  React.useEffect(() => {
+    if (isHost && user) {
+      loadHostGames()
+    }
+  }, [isHost, user, loadHostGames])
+
+  React.useEffect(() => {
+    if (currentView === 'host-menu' && isHost) {
+      loadHostGames()
+    }
+  }, [currentView, isHost, loadHostGames])
+
+  React.useEffect(() => {
+    if (!isHost) return
+
+    if (currentGameId) {
+      window.localStorage.setItem(LAST_GAME_STORAGE_KEY, currentGameId)
+    } else {
+      window.localStorage.removeItem(LAST_GAME_STORAGE_KEY)
+    }
+  }, [currentGameId, isHost])
 
   // Auto-redirect based on user role when user changes
   React.useEffect(() => {
@@ -140,6 +222,57 @@ export function AppRouter() {
     await signOut()
     setCurrentView('auth')
     setCurrentGameId(null)
+    setHostGames([])
+    setHostGamesError(null)
+  }
+
+  const handleCopyJoinLink = async () => {
+    if (!joinLink) return
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(joinLink)
+        setCopiedJoinLink(true)
+        setTimeout(() => setCopiedJoinLink(false), 2000)
+      } else {
+        window.prompt('Copy this link to share with players:', joinLink)
+      }
+    } catch (error) {
+      console.error('Failed to copy join link', error)
+      window.prompt('Copy this link to share with players:', joinLink)
+    }
+  }
+
+  const openTVDisplay = (gameId: string | null) => {
+    if (!gameId) return
+    const url = `${window.location.origin}/tv/${gameId}`
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  const handleOpenHostDashboard = (gameId?: string) => {
+    const targetGameId = gameId || currentGameId
+    if (!targetGameId) {
+      setCurrentView('host-create')
+      return
+    }
+
+    setCurrentGameId(targetGameId)
+    setCurrentView('host-dashboard')
+  }
+
+  const getStatusClasses = (status: string) => {
+    switch (status) {
+      case 'setup':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200'
+      case 'active':
+        return 'bg-green-100 text-green-800 border-green-200'
+      case 'paused':
+        return 'bg-orange-100 text-orange-800 border-orange-200'
+      case 'completed':
+        return 'bg-gray-100 text-gray-700 border-gray-200'
+      default:
+        return 'bg-slate-100 text-slate-700 border-slate-200'
+    }
   }
 
   const renderHeader = () => (
@@ -178,42 +311,146 @@ export function AppRouter() {
     switch (currentView) {
       case 'host-menu':
         return (
-          <div className="max-w-4xl mx-auto p-6">
+          <div className="max-w-5xl mx-auto p-6 space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>🎮 Get Your Game Ready</CardTitle>
+                <CardDescription>
+                  Create a new game or continue managing the most recent one.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {currentGameId && (gameLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Loading your game details...
+                  </div>
+                ) : currentGame ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-xl font-semibold">{currentGame.title}</h3>
+                        <p className="text-sm text-muted-foreground">Created {new Date(currentGame.created_at).toLocaleString()}</p>
+                      </div>
+                      <Badge className={`border ${getStatusClasses(currentGame.status)}`}>
+                        {currentGame.status.toUpperCase()}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-muted-foreground">Share this link with players to join:</p>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <code className="flex-1 bg-muted px-3 py-2 rounded text-sm break-all border border-muted-foreground/10">
+                          {joinLink}
+                        </code>
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={handleCopyJoinLink} className="gap-2">
+                            {copiedJoinLink ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                            {copiedJoinLink ? 'Copied!' : 'Copy link'}
+                          </Button>
+                          <Button variant="outline" onClick={() => openTVDisplay(currentGame.id)} className="gap-2">
+                            <Monitor className="h-4 w-4" />
+                            Open TV Display
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => handleOpenHostDashboard(currentGame.id)}>
+                        Manage Host Controls
+                      </Button>
+                      <Button variant="outline" onClick={() => setCurrentView('leaderboard')}>
+                        View Leaderboard
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      {gameError || 'We could not load your selected game. Create a new one to get started.'}
+                    </AlertDescription>
+                  </Alert>
+                ))}
+
+                {!currentGameId && (
+                  <div className="space-y-4">
+                    <p className="text-muted-foreground">
+                      You don&apos;t have a game selected yet. Create a new trivia party or pick from your recent games below.
+                    </p>
+                    <Button onClick={() => setCurrentView('host-create')} className="self-start">
+                      Create a New Game
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <div className="grid gap-6 md:grid-cols-2">
-              <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setCurrentView('host-create')}>
+              <Card>
                 <CardHeader>
-                  <CardTitle>🎮 Create New Game</CardTitle>
+                  <CardTitle>🆕 Create a Fresh Game</CardTitle>
                   <CardDescription>
-                    Set up a new trivia game with custom settings
+                    Walk through the setup wizard to customize rounds, timing, and scoring.
                   </CardDescription>
                 </CardHeader>
+                <CardContent>
+                  <Button onClick={() => setCurrentView('host-create')}>Start Game Setup</Button>
+                </CardContent>
               </Card>
 
-              <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setCurrentView('host-dashboard')}>
+              <Card>
                 <CardHeader>
-                  <CardTitle>🎛️ Manage Current Game</CardTitle>
+                  <CardTitle>📂 Your Recent Games</CardTitle>
                   <CardDescription>
-                    Control your active game, teams, and questions
+                    Jump back into an existing trivia night or open its display.
                   </CardDescription>
                 </CardHeader>
-              </Card>
+                <CardContent className="space-y-4">
+                  {hostGamesLoading && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Loading games...
+                    </div>
+                  )}
 
-              <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setCurrentView('tv-display')}>
-                <CardHeader>
-                  <CardTitle>📺 TV Display</CardTitle>
-                  <CardDescription>
-                    Full-screen display for questions and QR codes
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+                  {hostGamesError && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{hostGamesError}</AlertDescription>
+                    </Alert>
+                  )}
 
-              <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setCurrentView('leaderboard')}>
-                <CardHeader>
-                  <CardTitle>🏆 Leaderboard</CardTitle>
-                  <CardDescription>
-                    View team standings and game statistics
-                  </CardDescription>
-                </CardHeader>
+                  {!hostGamesLoading && hostGames.length === 0 && !hostGamesError && (
+                    <p className="text-sm text-muted-foreground">
+                      You haven&apos;t created any games yet. Start by setting up a new game.
+                    </p>
+                  )}
+
+                  {hostGames.map((game) => (
+                    <div key={game.id} className="rounded-lg border border-border p-3 space-y-3">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold">{game.title}</span>
+                          {game.id === currentGameId && (
+                            <Badge variant="secondary">Selected</Badge>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Status: {game.status.toUpperCase()} • Created {new Date(game.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" onClick={() => handleOpenHostDashboard(game.id)}>
+                          Open Host Controls
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => openTVDisplay(game.id)} className="gap-2">
+                          <ExternalLink className="h-4 w-4" />
+                          TV Display
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
               </Card>
             </div>
           </div>
@@ -225,6 +462,7 @@ export function AppRouter() {
             <HostGameForm onGameCreated={(gameId) => {
               setCurrentGameId(gameId)
               setCurrentView('host-dashboard')
+              loadHostGames()
             }} onCancel={() => setCurrentView('host-menu')} />
           </div>
         )
@@ -243,7 +481,7 @@ export function AppRouter() {
           <div className="max-w-7xl mx-auto p-6">
             <HostDashboard
               gameId={currentGameId}
-              onShowTVDisplay={() => setCurrentView('tv-display')}
+              onShowTVDisplay={() => openTVDisplay(currentGameId)}
             />
           </div>
         )
