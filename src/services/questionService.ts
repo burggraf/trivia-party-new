@@ -582,15 +582,40 @@ export class QuestionService {
       return false
     }
 
-    const errorWithMetadata = error as { code?: unknown; message?: unknown }
+    const errorWithMetadata = error as { code?: unknown; message?: unknown; details?: unknown }
     const code = typeof errorWithMetadata?.code === 'string' ? errorWithMetadata.code as string : ''
     const message = typeof errorWithMetadata?.message === 'string' ? errorWithMetadata.message as string : ''
-    const lowered = message.toLowerCase()
+    const details = typeof errorWithMetadata?.details === 'string' ? errorWithMetadata.details as string : ''
+    const lowered = `${message} ${details}`.toLowerCase()
 
-    return code === '42703' ||
-      lowered.includes(`column "${column.toLowerCase()}`) ||
-      lowered.includes(`column '${column.toLowerCase()}`) ||
-      lowered.includes(`${column.toLowerCase()} does not exist`)
+    const attemptedColumn = column.toLowerCase()
+    const alternateColumn = attemptedColumn === 'question_order' ? 'question_number' : 'question_order'
+
+    if (code === '42703') {
+      return true
+    }
+
+    if (
+      lowered.includes(`column "${attemptedColumn}`) ||
+      lowered.includes(`column '${attemptedColumn}`) ||
+      lowered.includes(`${attemptedColumn} does not exist`)
+    ) {
+      return true
+    }
+
+    // Handle legacy schemas where the alternate column is required (e.g. NOT NULL)
+    if (
+      lowered.includes(`column "${alternateColumn}`) ||
+      lowered.includes(`column '${alternateColumn}`) ||
+      lowered.includes(`${alternateColumn} does not exist`) ||
+      lowered.includes(`null value in column "${alternateColumn}`) ||
+      lowered.includes(`null value in column '${alternateColumn}`) ||
+      lowered.includes(`${alternateColumn} violates not-null constraint`)
+    ) {
+      return true
+    }
+
+    return false
   }
 
   private static hashCode(str: string): number {
