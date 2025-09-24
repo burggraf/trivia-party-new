@@ -127,6 +127,32 @@ export class QuestionService {
 
       const correctPosition = ['a', 'b', 'c', 'd'].indexOf(randomized.correct_answer)
 
+      // First attempt to insert via RPC helper if available. This server-side
+      // function handles legacy schemas, clears conflicting records, and avoids
+      // the class of issues where leftover rows block new inserts.
+      const rpcAttempt = await this.tryPrepareGameQuestionRpc({
+        game_id: gameId,
+        question_id: questionId,
+        round_number: roundNumber,
+        question_number: questionNumber,
+        shuffled_answers: shuffledAnswers,
+        correct_position: correctPosition
+      })
+
+      if (rpcAttempt.success && rpcAttempt.record) {
+        const normalizedRecord = this.normalizeGameQuestionRecord(rpcAttempt.record, questionNumber)
+        return { data: normalizedRecord, error: null }
+      }
+
+      if (rpcAttempt.error && !this.isRpcNotAvailableError(rpcAttempt.error)) {
+        const message = this.getErrorMessage(rpcAttempt.error, 'Failed to insert game question')
+
+        return {
+          data: null,
+          error: { message, code: 'DATABASE_ERROR', details: rpcAttempt.error }
+        }
+      }
+
       const basePayload = {
         game_id: gameId,
         question_id: questionId,
@@ -560,6 +586,62 @@ export class QuestionService {
       shuffled_answers: sanitizedAnswers,
       time_limit: recordWithFields.time_limit ?? null
     } as GameQuestion
+  }
+
+  private static async tryPrepareGameQuestionRpc(params: {
+    game_id: string
+    question_id: string
+    round_number: number
+    question_number: number
+    shuffled_answers: string[]
+    correct_position: number
+  }): Promise<{ success: boolean; record?: Record<string, unknown>; error?: unknown }> {
+    try {
+      const { data, error } = await supabase.rpc('prepare_game_question', params)
+
+      if (error) {
+        return { success: false, error }
+      }
+
+      if (!data) {
+        return { success: false }
+      }
+
+      const record = Array.isArray(data) ? data[0] : data
+
+      if (!record) {
+        return { success: false }
+      }
+
+      return { success: true, record: record as Record<string, unknown> }
+    } catch (error) {
+      return { success: false, error }
+    }
+  }
+
+  private static isRpcNotAvailableError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false
+    }
+
+    const errorWithMetadata = error as { code?: unknown; message?: unknown; details?: unknown }
+    const code = typeof errorWithMetadata.code === 'string' ? errorWithMetadata.code : ''
+    const message = typeof errorWithMetadata.message === 'string' ? errorWithMetadata.message.toLowerCase() : ''
+    const details = typeof errorWithMetadata.details === 'string' ? errorWithMetadata.details.toLowerCase() : ''
+
+    if (code === '42883' || code === 'PGRST102' || code === 'PGRST201') {
+      return true
+    }
+
+    if (message.includes('prepare_game_question')) {
+      return true
+    }
+
+    if (details.includes('prepare_game_question')) {
+      return true
+    }
+
+    return false
   }
 
   private static getErrorMessage(error: unknown, fallback: string): string {
