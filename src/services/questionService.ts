@@ -836,21 +836,28 @@ export class QuestionService {
 
   // Utility: Shuffle array with seed for deterministic randomization
   private static shuffleWithSeed<T>(array: T[], seed: number): T[] {
-    const shuffled = [...array]
-    let currentIndex = shuffled.length
-    let randomIndex: number
-
-    // Use seed-based random number generator
-    const seededRandom = () => {
-      seed = (seed * 9301 + 49297) % 233280
-      return seed / 233280
+    if (!Array.isArray(array)) {
+      console.error('[QuestionService.shuffleWithSeed] Expected array input', {
+        receivedType: typeof array,
+        receivedValue: array
+      })
+      return []
     }
 
-    while (currentIndex !== 0) {
-      randomIndex = Math.floor(seededRandom() * currentIndex)
-      currentIndex--
+    const shuffled = [...array]
+    const normalizedSeed = Number.isFinite(seed) ? Math.abs(Math.floor(seed)) : 0
+    let workingSeed = normalizedSeed % 233280
 
-      [shuffled[currentIndex], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[currentIndex]]
+    const seededRandom = () => {
+      workingSeed = (workingSeed * 9301 + 49297) % 233280
+      return workingSeed / 233280
+    }
+
+    for (let currentIndex = shuffled.length - 1; currentIndex > 0; currentIndex--) {
+      const randomIndex = Math.floor(seededRandom() * (currentIndex + 1))
+      const temp = shuffled[currentIndex]
+      shuffled[currentIndex] = shuffled[randomIndex] as T
+      shuffled[randomIndex] = temp as T
     }
 
     return shuffled
