@@ -231,18 +231,36 @@ export class GameService {
   // Start game (change status to active)
   static async startGame(gameId: string): Promise<ApiResponse<Game>> {
     try {
+      console.log('[GameService.startGame] Starting game initialization', { gameId })
+
       // Get game details first
       const gameResponse = await this.getGame(gameId)
       if (gameResponse.error || !gameResponse.data) {
+        console.error('[GameService.startGame] Failed to load game details', {
+          gameId,
+          error: gameResponse.error
+        })
         return gameResponse
       }
 
       const game = gameResponse.data
+      console.log('[GameService.startGame] Game details loaded', {
+        id: game.id,
+        status: game.status,
+        questionsPerRound: game.questions_per_round,
+        maxRounds: game.max_rounds
+      })
 
       // Import QuestionService to preselect questions
       const { QuestionService } = await import('./questionService')
 
       // Preselect questions for the game
+      console.log('[GameService.startGame] Preparing questions', {
+        gameId,
+        questionsPerRound: game.questions_per_round,
+        maxRounds: game.max_rounds,
+        hostId: game.host_id
+      })
       const questionsResponse = await QuestionService.preselectQuestionsForGame(
         gameId,
         game.questions_per_round,
@@ -251,6 +269,10 @@ export class GameService {
       )
 
       if (questionsResponse.error) {
+        console.error('[GameService.startGame] Failed to prepare questions', {
+          gameId,
+          error: questionsResponse.error
+        })
         return {
           data: null,
           error: { message: `Failed to prepare questions: ${questionsResponse.error.message}`, code: 'QUESTION_PREPARATION_FAILED', details: questionsResponse.error }
@@ -258,11 +280,16 @@ export class GameService {
       }
 
       // Now start the game
+      console.log('[GameService.startGame] Questions prepared successfully, activating game', { gameId })
       return this.updateGame(gameId, {
         status: 'active',
         started_at: new Date().toISOString()
       })
     } catch (error) {
+      console.error('[GameService.startGame] Unexpected error when starting game', {
+        gameId,
+        error
+      })
       return {
         data: null,
         error: { message: 'Failed to start game', code: 'UNKNOWN_ERROR', details: error }

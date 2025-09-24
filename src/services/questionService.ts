@@ -101,6 +101,13 @@ export class QuestionService {
     questionData?: Question
   ): Promise<ApiResponse<GameQuestion>> {
     try {
+      console.log('[QuestionService.addQuestionToGame] Preparing to add question', {
+        gameId,
+        questionId,
+        roundNumber,
+        questionNumber,
+        hasPrefetchedData: Boolean(questionData)
+      })
       let question = questionData
 
       if (!question) {
@@ -115,6 +122,7 @@ export class QuestionService {
 
       // Generate a deterministic seed based on game and question for consistent randomization
       const randomizationSeed = `${gameId}-${questionId}-${roundNumber}-${questionNumber}`
+      console.log('[QuestionService.addQuestionToGame] Randomizing answers', { randomizationSeed })
       const randomized = this.randomizeAnswers(question, randomizationSeed)
 
       // Store shuffled answers and correct position
@@ -140,6 +148,30 @@ export class QuestionService {
       })
 
       if (rpcAttempt.success && rpcAttempt.record) {
+        console.log('[QuestionService.addQuestionToGame] RPC prepare_game_question succeeded', {
+          gameId,
+          questionId,
+          roundNumber,
+          questionNumber
+        })
+      } else if (rpcAttempt.error) {
+        console.warn('[QuestionService.addQuestionToGame] RPC prepare_game_question failed, will attempt direct insert', {
+          gameId,
+          questionId,
+          roundNumber,
+          questionNumber,
+          error: rpcAttempt.error
+        })
+      } else {
+        console.log('[QuestionService.addQuestionToGame] RPC prepare_game_question unavailable, falling back to direct insert', {
+          gameId,
+          questionId,
+          roundNumber,
+          questionNumber
+        })
+      }
+
+      if (rpcAttempt.success && rpcAttempt.record) {
         const normalizedRecord = this.normalizeGameQuestionRecord(rpcAttempt.record, questionNumber)
         return { data: normalizedRecord, error: null }
       }
@@ -154,6 +186,13 @@ export class QuestionService {
 
       const attemptInsert = async (positionField: 'question_order' | 'question_number') => {
         try {
+          console.log('[QuestionService.addQuestionToGame] Attempting insert', {
+            gameId,
+            questionId,
+            roundNumber,
+            questionNumber,
+            positionField
+          })
           const response = await supabase
             .from('game_questions')
             .insert([{ ...basePayload, [positionField]: questionNumber }])
@@ -162,6 +201,13 @@ export class QuestionService {
 
           return { data: response.data, error: response.error }
         } catch (error) {
+          console.error('[QuestionService.addQuestionToGame] Insert threw unexpected error', {
+            gameId,
+            questionId,
+            roundNumber,
+            questionNumber,
+            error
+          })
           return { data: null, error }
         }
       }
@@ -169,12 +215,27 @@ export class QuestionService {
       let insertResult = await attemptInsert('question_order')
 
       if (this.shouldRetryWithAlternateColumn(insertResult.error, 'question_order')) {
+        console.warn('[QuestionService.addQuestionToGame] Retrying insert with alternate position column', {
+          gameId,
+          questionId,
+          roundNumber,
+          questionNumber,
+          error: insertResult.error
+        })
         insertResult = await attemptInsert('question_number')
       }
 
       if (insertResult.error || !insertResult.data) {
         const primaryError = insertResult.error ?? rpcAttempt.error
         const message = this.getErrorMessage(primaryError, 'Failed to insert game question')
+
+        console.error('[QuestionService.addQuestionToGame] Insert failed', {
+          gameId,
+          questionId,
+          roundNumber,
+          questionNumber,
+          error: primaryError
+        })
 
         const combinedDetails = (() => {
           if (insertResult.error && rpcAttempt.error && insertResult.error !== rpcAttempt.error) {
@@ -195,8 +256,23 @@ export class QuestionService {
 
       const normalizedRecord = this.normalizeGameQuestionRecord(insertResult.data, questionNumber)
 
+      console.log('[QuestionService.addQuestionToGame] Question added successfully', {
+        gameId,
+        questionId,
+        roundNumber,
+        questionNumber,
+        recordId: normalizedRecord.id
+      })
+
       return { data: normalizedRecord, error: null }
     } catch (error) {
+      console.error('[QuestionService.addQuestionToGame] Unexpected error', {
+        gameId,
+        questionId,
+        roundNumber,
+        questionNumber,
+        error
+      })
       return {
         data: null,
         error: { message: 'Failed to add question to game', code: 'UNKNOWN_ERROR', details: error }
@@ -363,20 +439,49 @@ export class QuestionService {
   static async preselectQuestionsForGame(gameId: string, questionsPerRound: number, maxRounds: number, hostId: string): Promise<ApiResponse<GameQuestion[]>> {
     try {
       const totalQuestions = questionsPerRound * maxRounds
+      console.log('[QuestionService.preselectQuestionsForGame] Starting question preparation', {
+        gameId,
+        hostId,
+        questionsPerRound,
+        maxRounds,
+        totalQuestions
+      })
 
       // Ensure we start from a clean slate if questions already exist
       const clearResponse = await this.clearExistingGameQuestions(gameId)
       if (clearResponse.error) {
+        console.error('[QuestionService.preselectQuestionsForGame] Failed to clear existing game questions', {
+          gameId,
+          error: clearResponse.error
+        })
         return clearResponse
       }
+      console.log('[QuestionService.preselectQuestionsForGame] Cleared existing game questions', { gameId })
 
       // Get available questions for this host
       const availableResponse = await this.getAvailableQuestions(hostId, totalQuestions + 10)
       if (availableResponse.error || !availableResponse.data) {
+        console.error('[QuestionService.preselectQuestionsForGame] Failed to load available questions', {
+          gameId,
+          hostId,
+          error: availableResponse.error
+        })
         return availableResponse as ApiResponse<GameQuestion[]>
       }
 
+      console.log('[QuestionService.preselectQuestionsForGame] Loaded available questions', {
+        gameId,
+        hostId,
+        availableCount: availableResponse.data.length,
+        required: totalQuestions
+      })
+
       if (availableResponse.data.length < totalQuestions) {
+        console.error('[QuestionService.preselectQuestionsForGame] Not enough questions to start game', {
+          gameId,
+          available: availableResponse.data.length,
+          required: totalQuestions
+        })
         return {
           data: null,
           error: { message: `Not enough available questions. Need ${totalQuestions}, found ${availableResponse.data.length}`, code: 'INSUFFICIENT_QUESTIONS' }
@@ -387,14 +492,32 @@ export class QuestionService {
       const selectedQuestions = this.shuffleArray([...availableResponse.data]).slice(0, totalQuestions)
       const gameQuestions: GameQuestion[] = []
 
+      console.log('[QuestionService.preselectQuestionsForGame] Selected questions for game', {
+        gameId,
+        selectedQuestionIds: selectedQuestions.map(question => question.id)
+      })
+
       // Add questions to game
       let questionIndex = 0
       for (let round = 1; round <= maxRounds; round++) {
         for (let questionNum = 1; questionNum <= questionsPerRound; questionNum++) {
           const question = selectedQuestions[questionIndex]
+          console.log('[QuestionService.preselectQuestionsForGame] Adding question to game', {
+            gameId,
+            round,
+            questionNumber: questionNum,
+            questionId: question.id
+          })
           const response = await this.addQuestionToGame(gameId, question.id, round, questionNum, question)
 
           if (response.error) {
+            console.error('[QuestionService.preselectQuestionsForGame] Failed to add question during preselection', {
+              gameId,
+              round,
+              questionNumber: questionNum,
+              questionId: question.id,
+              error: response.error
+            })
             return {
               data: null,
               error: response.error
@@ -409,14 +532,31 @@ export class QuestionService {
       // Mark questions as used by this host
       const usageResult = await this.markQuestionsAsUsed(hostId, gameId, selectedQuestions.map(q => q.id))
       if (usageResult.error) {
+        console.error('[QuestionService.preselectQuestionsForGame] Failed to mark questions as used', {
+          gameId,
+          hostId,
+          error: usageResult.error
+        })
         return {
           data: null,
           error: usageResult.error
         }
       }
 
+      console.log('[QuestionService.preselectQuestionsForGame] Questions prepared successfully', {
+        gameId,
+        totalPrepared: gameQuestions.length
+      })
+
       return { data: gameQuestions, error: null }
     } catch (error) {
+      console.error('[QuestionService.preselectQuestionsForGame] Unexpected error', {
+        gameId,
+        hostId,
+        questionsPerRound,
+        maxRounds,
+        error
+      })
       return {
         data: null,
         error: { message: 'Failed to preselect questions', code: 'UNKNOWN_ERROR', details: error }
