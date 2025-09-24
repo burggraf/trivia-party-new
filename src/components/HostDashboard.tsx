@@ -18,7 +18,9 @@ import {
   CheckCircle,
   Settings,
   Monitor,
-  RefreshCw
+  RefreshCw,
+  Copy,
+  Check
 } from 'lucide-react'
 import { GameService } from '../services/gameService'
 import { TeamService } from '../services/teamService'
@@ -43,6 +45,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [copiedJoinLink, setCopiedJoinLink] = useState(false)
+
+  const joinLink = `${window.location.origin}/join/${gameId}`
 
   useEffect(() => {
     loadGameData()
@@ -224,6 +229,21 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
     }
   }
 
+  const handleCopyJoinLink = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(joinLink)
+        setCopiedJoinLink(true)
+        setTimeout(() => setCopiedJoinLink(false), 2000)
+      } else {
+        window.prompt('Copy this link to share with players:', joinLink)
+      }
+    } catch (error) {
+      console.error('Failed to copy join link:', error)
+      window.prompt('Copy this link to share with players:', joinLink)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -271,9 +291,34 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
         </div>
         <Button onClick={onShowTVDisplay} className="gap-2">
           <Monitor className="h-4 w-4" />
-          TV Display
+          Open TV Display
         </Button>
       </div>
+
+      {/* Invite Players */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Invite Players</CardTitle>
+          <CardDescription>
+            Share this link or open the TV display to show the QR code in a separate window.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <code className="block bg-muted px-3 py-2 rounded text-sm break-all border border-muted-foreground/10">
+            {joinLink}
+          </code>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={handleCopyJoinLink} className="gap-2">
+              {copiedJoinLink ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copiedJoinLink ? 'Copied!' : 'Copy Join Link'}
+            </Button>
+            <Button variant="outline" onClick={onShowTVDisplay} className="gap-2">
+              <Monitor className="h-4 w-4" />
+              Launch TV Display
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Progress Bar */}
       <div className="space-y-2">
