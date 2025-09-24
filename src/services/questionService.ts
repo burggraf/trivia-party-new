@@ -55,12 +55,15 @@ export class QuestionService {
 
   // Randomize question answers (correct answer is always in field 'a')
   static randomizeAnswers(question: Question, seed?: string): RandomizedQuestion {
-    // Create array of answers with their original positions
+    const fallbackAnswers = ['Answer A', 'Answer B', 'Answer C', 'Answer D']
+
+    // Create array of answers with their original positions. Fill in any missing
+    // answer text so that we always persist valid strings to Postgres.
     const answers = [
-      { text: question.a, original: 'a', isCorrect: true },
-      { text: question.b, original: 'b', isCorrect: false },
-      { text: question.c, original: 'c', isCorrect: false },
-      { text: question.d, original: 'd', isCorrect: false }
+      { text: question.a ?? fallbackAnswers[0], original: 'a', isCorrect: true },
+      { text: question.b ?? fallbackAnswers[1], original: 'b', isCorrect: false },
+      { text: question.c ?? fallbackAnswers[2], original: 'c', isCorrect: false },
+      { text: question.d ?? fallbackAnswers[3], original: 'd', isCorrect: false }
     ]
 
     // Use seed for deterministic randomization (same for all players in a game)
@@ -90,15 +93,25 @@ export class QuestionService {
   }
 
   // Add question to game
-  static async addQuestionToGame(gameId: string, questionId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<GameQuestion>> {
+  static async addQuestionToGame(
+    gameId: string,
+    questionId: string,
+    roundNumber: number,
+    questionNumber: number,
+    questionData?: Question
+  ): Promise<ApiResponse<GameQuestion>> {
     try {
-      // Get the question to randomize answers
-      const questionResponse = await this.getQuestion(questionId)
-      if (questionResponse.error || !questionResponse.data) {
-        return questionResponse as ApiResponse<GameQuestion>
-      }
+      let question = questionData
 
-      const question = questionResponse.data
+      if (!question) {
+        // Get the question to randomize answers
+        const questionResponse = await this.getQuestion(questionId)
+        if (questionResponse.error || !questionResponse.data) {
+          return questionResponse as ApiResponse<GameQuestion>
+        }
+
+        question = questionResponse.data
+      }
 
       // Generate a deterministic seed based on game and question for consistent randomization
       const randomizationSeed = `${gameId}-${questionId}-${roundNumber}-${questionNumber}`
@@ -139,6 +152,45 @@ export class QuestionService {
       return {
         data: null,
         error: { message: 'Failed to add question to game', code: 'UNKNOWN_ERROR', details: error }
+      }
+    }
+  }
+
+  private static async clearExistingGameQuestions(gameId: string): Promise<ApiResponse<boolean>> {
+    try {
+      const { data: existing, error: fetchError } = await supabase
+        .from('game_questions')
+        .select('id')
+        .eq('game_id', gameId)
+
+      if (fetchError) {
+        return {
+          data: null,
+          error: { message: fetchError.message, code: 'DATABASE_ERROR', details: fetchError }
+        }
+      }
+
+      if (!existing || existing.length === 0) {
+        return { data: true, error: null }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('game_questions')
+        .delete()
+        .eq('game_id', gameId)
+
+      if (deleteError) {
+        return {
+          data: null,
+          error: { message: deleteError.message, code: 'DATABASE_ERROR', details: deleteError }
+        }
+      }
+
+      return { data: true, error: null }
+    } catch (error) {
+      return {
+        data: null,
+        error: { message: 'Failed to clear existing game questions', code: 'UNKNOWN_ERROR', details: error }
       }
     }
   }
@@ -242,6 +294,12 @@ export class QuestionService {
     try {
       const totalQuestions = questionsPerRound * maxRounds
 
+      // Ensure we start from a clean slate if questions already exist
+      const clearResponse = await this.clearExistingGameQuestions(gameId)
+      if (clearResponse.error) {
+        return clearResponse
+      }
+
       // Get available questions for this host
       const availableResponse = await this.getAvailableQuestions(hostId, totalQuestions + 10)
       if (availableResponse.error || !availableResponse.data) {
@@ -264,7 +322,7 @@ export class QuestionService {
       for (let round = 1; round <= maxRounds; round++) {
         for (let questionNum = 1; questionNum <= questionsPerRound; questionNum++) {
           const question = selectedQuestions[questionIndex]
-          const response = await this.addQuestionToGame(gameId, question.id, round, questionNum)
+          const response = await this.addQuestionToGame(gameId, question.id, round, questionNum, question)
 
           if (response.error) {
             return {
@@ -279,7 +337,13 @@ export class QuestionService {
       }
 
       // Mark questions as used by this host
-      await this.markQuestionsAsUsed(hostId, selectedQuestions.map(q => q.id))
+      const usageResult = await this.markQuestionsAsUsed(hostId, gameId, selectedQuestions.map(q => q.id))
+      if (usageResult.error) {
+        return {
+          data: null,
+          error: usageResult.error
+        }
+      }
 
       return { data: gameQuestions, error: null }
     } catch (error) {
@@ -291,17 +355,23 @@ export class QuestionService {
   }
 
   // Mark questions as used by host
-  static async markQuestionsAsUsed(hostId: string, questionIds: string[]): Promise<ApiResponse<boolean>> {
+  static async markQuestionsAsUsed(hostId: string, gameId: string, questionIds: string[]): Promise<ApiResponse<boolean>> {
     try {
+      if (questionIds.length === 0) {
+        return { data: true, error: null }
+      }
+
+      const timestamp = new Date().toISOString()
       const usageRecords = questionIds.map(questionId => ({
         host_id: hostId,
         question_id: questionId,
-        used_at: new Date().toISOString()
+        used_in_game_id: gameId,
+        used_at: timestamp
       }))
 
       const { error } = await supabase
         .from('question_usage')
-        .insert(usageRecords)
+        .upsert(usageRecords, { onConflict: 'host_id,question_id' })
 
       if (error) {
         return {
@@ -340,21 +410,27 @@ export class QuestionService {
       }
 
       const questionsWithAnswers = data?.map(gameQuestion => {
-        const question = (gameQuestion as any).questions
-        const randomized = this.randomizeAnswers(question, gameQuestion.randomization_seed)
+        const record = gameQuestion as GameQuestion & { questions: Question }
+        const shuffledAnswers = record.shuffled_answers || []
+        const correctLetter = ['a', 'b', 'c', 'd'][record.correct_position] as 'a' | 'b' | 'c' | 'd'
 
         return {
-          game_question_id: gameQuestion.id,
+          game_question_id: record.id,
           game_id: gameId,
-          round_number: gameQuestion.round_number,
-          question_number: gameQuestion.question_number,
-          question: randomized.question,
-          category: randomized.category,
-          difficulty: randomized.difficulty,
-          answers: randomized.answers,
-          correct_answer: randomized.correct_answer,
-          displayed_at: gameQuestion.displayed_at,
-          time_limit: gameQuestion.time_limit
+          round_number: record.round_number,
+          question_number: record.question_order,
+          question: record.questions.question,
+          category: record.questions.category,
+          difficulty: record.questions.difficulty,
+          answers: {
+            a: shuffledAnswers[0] ?? '',
+            b: shuffledAnswers[1] ?? '',
+            c: shuffledAnswers[2] ?? '',
+            d: shuffledAnswers[3] ?? ''
+          },
+          correct_answer: correctLetter,
+          displayed_at: record.displayed_at,
+          time_limit: 30
         }
       }) || []
 
@@ -372,12 +448,7 @@ export class QuestionService {
     try {
       const { data, error } = await supabase
         .from('game_questions')
-        .select(`
-          randomization_seed,
-          questions (
-            a, b, c, d
-          )
-        `)
+        .select('correct_position')
         .eq('game_id', gameId)
         .eq('round_number', roundNumber)
         .eq('question_order', questionNumber)
@@ -390,17 +461,14 @@ export class QuestionService {
         }
       }
 
-      const gameQuestion = data as any
-      const question = gameQuestion.questions
-
-      // Recreate the randomization to determine correct answer position
-      const randomized = this.randomizeAnswers(question, gameQuestion.randomization_seed)
-      const isCorrect = selectedAnswer === randomized.correct_answer
+      const correctPosition = (data as GameQuestion).correct_position
+      const answerIndex = ['a', 'b', 'c', 'd'].indexOf(selectedAnswer)
+      const isCorrect = answerIndex === correctPosition
 
       return {
         data: {
           isCorrect,
-          correctAnswer: randomized.correct_answer
+          correctAnswer: ['a', 'b', 'c', 'd'][correctPosition] as 'a' | 'b' | 'c' | 'd'
         },
         error: null
       }
