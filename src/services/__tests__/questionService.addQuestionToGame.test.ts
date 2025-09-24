@@ -124,16 +124,62 @@ describe('QuestionService.addQuestionToGame', () => {
     ])
   })
 
-  it('returns an error when RPC fails with a real database issue', async () => {
+  it('returns an error when both RPC and direct insert fail', async () => {
     ;(supabase.rpc as unknown as Mock).mockResolvedValue({
       data: null,
       error: { message: 'Not authorized', code: '42501' }
     })
 
+    const single = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'Insert blocked by RLS', code: '42501' }
+    })
+    const select = vi.fn().mockReturnValue({ single })
+    const insert = vi.fn().mockReturnValue({ select })
+    ;(supabase.from as unknown as Mock).mockReturnValue({ insert })
+
     const response = await QuestionService.addQuestionToGame('game-id', baseQuestion.id, 1, 2, baseQuestion)
 
     expect(response.data).toBeNull()
-    expect(response.error?.message).toBe('Not authorized')
-    expect(supabase.from).not.toHaveBeenCalled()
+    expect(response.error?.message).toBe('Insert blocked by RLS')
+    expect(insert).toHaveBeenCalled()
+  })
+
+  it('uses direct insert when RPC fails with a recoverable error', async () => {
+    ;(supabase.rpc as unknown as Mock).mockResolvedValue({
+      data: null,
+      error: { message: 'permission denied for function prepare_game_question', code: '42501' }
+    })
+
+    const single = vi.fn().mockResolvedValue({
+      data: {
+        id: 'fallback-id',
+        game_id: 'game-id',
+        question_id: baseQuestion.id,
+        round_number: 1,
+        question_order: 2,
+        shuffled_answers: ['Answer A', 'Answer B', 'Answer C', 'Answer D'],
+        correct_position: 1
+      },
+      error: null
+    })
+    const select = vi.fn().mockReturnValue({ single })
+    const insert = vi.fn().mockReturnValue({ select })
+    ;(supabase.from as unknown as Mock).mockReturnValue({ insert })
+
+    const response = await QuestionService.addQuestionToGame('game-id', baseQuestion.id, 1, 2, baseQuestion)
+
+    expect(response.error).toBeNull()
+    expect(response.data?.id).toBe('fallback-id')
+    expect(insert).toHaveBeenCalledWith([
+      {
+        game_id: 'game-id',
+        question_id: baseQuestion.id,
+        round_number: 1,
+        shuffled_answers: ['Answer A', 'Answer B', 'Answer C', 'Answer D'],
+        correct_position: 1,
+        question_order: 2
+      }
+    ])
   })
 })

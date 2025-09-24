@@ -144,15 +144,6 @@ export class QuestionService {
         return { data: normalizedRecord, error: null }
       }
 
-      if (rpcAttempt.error && !this.isRpcNotAvailableError(rpcAttempt.error)) {
-        const message = this.getErrorMessage(rpcAttempt.error, 'Failed to insert game question')
-
-        return {
-          data: null,
-          error: { message, code: 'DATABASE_ERROR', details: rpcAttempt.error }
-        }
-      }
-
       const basePayload = {
         game_id: gameId,
         question_id: questionId,
@@ -161,13 +152,19 @@ export class QuestionService {
         correct_position: correctPosition
       }
 
-      const attemptInsert = (positionField: 'question_order' | 'question_number') => (
-        supabase
-          .from('game_questions')
-          .insert([{ ...basePayload, [positionField]: questionNumber }])
-          .select()
-          .single()
-      )
+      const attemptInsert = async (positionField: 'question_order' | 'question_number') => {
+        try {
+          const response = await supabase
+            .from('game_questions')
+            .insert([{ ...basePayload, [positionField]: questionNumber }])
+            .select()
+            .single()
+
+          return { data: response.data, error: response.error }
+        } catch (error) {
+          return { data: null, error }
+        }
+      }
 
       let insertResult = await attemptInsert('question_order')
 
@@ -176,11 +173,23 @@ export class QuestionService {
       }
 
       if (insertResult.error || !insertResult.data) {
-        const message = this.getErrorMessage(insertResult.error, 'Failed to insert game question')
+        const primaryError = insertResult.error ?? rpcAttempt.error
+        const message = this.getErrorMessage(primaryError, 'Failed to insert game question')
+
+        const combinedDetails = (() => {
+          if (insertResult.error && rpcAttempt.error && insertResult.error !== rpcAttempt.error) {
+            return {
+              insert: insertResult.error,
+              rpc: rpcAttempt.error
+            }
+          }
+
+          return (insertResult.error ?? rpcAttempt.error ?? undefined) as Record<string, unknown> | undefined
+        })()
 
         return {
           data: null,
-          error: { message, code: 'DATABASE_ERROR', details: insertResult.error ?? undefined }
+          error: { message, code: 'DATABASE_ERROR', details: combinedDetails }
         }
       }
 
@@ -617,31 +626,6 @@ export class QuestionService {
     } catch (error) {
       return { success: false, error }
     }
-  }
-
-  private static isRpcNotAvailableError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') {
-      return false
-    }
-
-    const errorWithMetadata = error as { code?: unknown; message?: unknown; details?: unknown }
-    const code = typeof errorWithMetadata.code === 'string' ? errorWithMetadata.code : ''
-    const message = typeof errorWithMetadata.message === 'string' ? errorWithMetadata.message.toLowerCase() : ''
-    const details = typeof errorWithMetadata.details === 'string' ? errorWithMetadata.details.toLowerCase() : ''
-
-    if (code === '42883' || code === 'PGRST102' || code === 'PGRST201') {
-      return true
-    }
-
-    if (message.includes('prepare_game_question')) {
-      return true
-    }
-
-    if (details.includes('prepare_game_question')) {
-      return true
-    }
-
-    return false
   }
 
   private static getErrorMessage(error: unknown, fallback: string): string {
