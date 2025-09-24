@@ -1,5 +1,4 @@
 import { supabase } from '../lib/supabase'
-import { isDemoMode, demoTeams, demoLeaderboard, createDemoResponse } from '../lib/demoData'
 import type { Team, CreateTeamRequest, LeaderboardEntry } from '../types/team'
 import type { ApiResponse } from '../types'
 import { generateJoinCode } from '../types/team'
@@ -89,10 +88,6 @@ export class TeamService {
 
   // Get all teams in a game
   static async getGameTeams(gameId: string): Promise<ApiResponse<Team[]>> {
-    if (isDemoMode()) {
-      return createDemoResponse(demoTeams)
-    }
-
     try {
       const { data, error } = await supabase
         .from('teams')
@@ -186,10 +181,6 @@ export class TeamService {
 
   // Get leaderboard for a game
   static async getLeaderboard(gameId: string): Promise<ApiResponse<LeaderboardEntry[]>> {
-    if (isDemoMode()) {
-      return createDemoResponse(demoLeaderboard)
-    }
-
     try {
       const { data: teams, error: teamsError } = await supabase
         .from('teams')

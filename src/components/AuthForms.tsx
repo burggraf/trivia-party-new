@@ -6,15 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
 import { RadioGroup, RadioGroupItem } from './ui/radio-group'
 import { useAuth } from '../contexts/AuthContext'
-import { isDemoMode } from '../lib/demoData'
 
 interface AuthFormsProps {
-  defaultMode?: 'signin' | 'signup' | 'guest'
+  defaultMode?: 'signin' | 'signup'
   onSuccess?: () => void
 }
 
 export function AuthForms({ defaultMode = 'signin', onSuccess }: AuthFormsProps) {
-  const { signUp, signIn, signInAsGuest } = useAuth()
+  const { signUp, signIn } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -32,9 +31,6 @@ export function AuthForms({ defaultMode = 'signin', onSuccess }: AuthFormsProps)
     name: '',
     role: 'player' as 'host' | 'player'
   })
-
-  // Guest Form
-  const [guestName, setGuestName] = useState('')
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -86,77 +82,13 @@ export function AuthForms({ defaultMode = 'signin', onSuccess }: AuthFormsProps)
     }
   }
 
-  const handleGuestSignIn = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-
-    if (!guestName.trim()) {
-      setError('Please enter your name')
-      setLoading(false)
-      return
-    }
-
-    try {
-      const success = await signInAsGuest(guestName.trim())
-      if (success) {
-        onSuccess?.()
-      } else {
-        setError('Failed to join as guest')
-      }
-    } catch (err) {
-      setError('Failed to join as guest')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const getDefaultTab = () => {
-    if (isDemoMode()) return 'guest'
-    return defaultMode
-  }
-
   return (
     <div className="w-full max-w-md mx-auto">
-      <Tabs defaultValue={getDefaultTab()} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          {isDemoMode() && <TabsTrigger value="guest">Quick Play</TabsTrigger>}
+      <Tabs defaultValue={defaultMode} className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="signin">Sign In</TabsTrigger>
           <TabsTrigger value="signup">Sign Up</TabsTrigger>
         </TabsList>
-
-        {isDemoMode() && (
-          <TabsContent value="guest">
-            <Card>
-              <CardHeader>
-                <CardTitle>Quick Play</CardTitle>
-                <CardDescription>
-                  Join the game instantly without creating an account
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleGuestSignIn} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="guest-name">Your Name</Label>
-                    <Input
-                      id="guest-name"
-                      placeholder="Enter your name"
-                      value={guestName}
-                      onChange={(e) => setGuestName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  {error && (
-                    <div className="text-sm text-red-600">{error}</div>
-                  )}
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? 'Joining...' : 'Join Game'}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
 
         <TabsContent value="signin">
           <Card>

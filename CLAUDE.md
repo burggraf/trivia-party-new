@@ -81,7 +81,7 @@ VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
-The app gracefully degrades to demo mode when environment variables are missing.
+The app requires these environment variables to communicate with Supabase.
 
 ## Testing Strategy
 

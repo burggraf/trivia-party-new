@@ -1,5 +1,4 @@
 import { supabase } from '../lib/supabase'
-import { isDemoMode, demoGame, createDemoResponse, createDemoError } from '../lib/demoData'
 import type { Game, CreateGameRequest, UpdateGameRequest, GameSettings } from '../types/game'
 import { DEFAULT_GAME_SETTINGS } from '../types/game'
 import type { ApiResponse } from '../types'
@@ -59,14 +58,6 @@ export class GameService {
 
   // Get game by ID
   static async getGame(gameId: string): Promise<ApiResponse<Game>> {
-    console.log('GameService.getGame called with gameId:', gameId)
-    console.log('isDemoMode():', isDemoMode())
-
-    if (isDemoMode()) {
-      console.log('Returning demo game data')
-      return createDemoResponse(demoGame)
-    }
-
     try {
       console.log('Querying database for game:', gameId)
       const { data, error } = await supabase

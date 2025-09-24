@@ -25,7 +25,6 @@ import { TeamService } from '../services/teamService'
 import { QuestionService } from '../services/questionService'
 import { AnswerService } from '../services/answerService'
 import { supabase } from '../lib/supabase'
-import { isDemoMode, demoGame, demoTeams, demoLeaderboard, demoCurrentQuestion, demoAnswerBreakdown, createDemoResponse } from '../lib/demoData'
 import type { Game } from '../types/game'
 import type { Team, LeaderboardEntry } from '../types/team'
 import type { QuestionWithAnswers } from '../types/question'
@@ -114,30 +113,22 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
 
   const loadGameData = async () => {
     try {
-      console.log('isDemoMode():', isDemoMode())
-      if (isDemoMode()) {
-        console.log('Using demo data')
-        // Use demo data
-        setGame(demoGame)
-        setTeams(demoTeams)
-        setLeaderboard(demoLeaderboard)
-        setIsLoading(false)
-        return
-      }
-
       const [gameResponse, teamsResponse, leaderboardResponse] = await Promise.all([
         GameService.getGame(gameId),
         TeamService.getGameTeams(gameId),
         TeamService.getLeaderboard(gameId)
       ])
 
+      if (gameResponse.error) {
+        throw new Error(gameResponse.error.message)
+      }
+
       if (gameResponse.data) setGame(gameResponse.data)
       if (teamsResponse.data) setTeams(teamsResponse.data)
       if (leaderboardResponse.data) setLeaderboard(leaderboardResponse.data)
-
-      setIsLoading(false)
     } catch (error) {
       setError('Failed to load game data')
+    } finally {
       setIsLoading(false)
     }
   }
@@ -146,11 +137,6 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
     if (!game) return
 
     try {
-      if (isDemoMode()) {
-        setCurrentQuestion(demoCurrentQuestion)
-        return
-      }
-
       const response = await QuestionService.getGameQuestion(
         gameId,
         game.current_round,
@@ -158,6 +144,8 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
       )
       if (response.data) {
         setCurrentQuestion(response.data)
+      } else if (response.error) {
+        setCurrentQuestion(null)
       }
     } catch (error) {
       console.error('Failed to load current question:', error)
@@ -168,11 +156,6 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
     if (!game) return
 
     try {
-      if (isDemoMode()) {
-        setAnswerBreakdown(demoAnswerBreakdown)
-        return
-      }
-
       const response = await AnswerService.getAnswerBreakdown(
         gameId,
         game.current_round,
@@ -180,6 +163,8 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({ gameId, onShowTVDi
       )
       if (response.data) {
         setAnswerBreakdown(response.data)
+      } else if (response.error) {
+        setAnswerBreakdown(null)
       }
     } catch (error) {
       console.error('Failed to load answer breakdown:', error)

@@ -1,13 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { AuthService, type AuthUser } from '../services/authService'
-import { isDemoMode } from '../lib/demoData'
 
 interface AuthContextType {
   user: AuthUser | null
   loading: boolean
   signUp: (email: string, password: string, name: string, role: 'host' | 'player') => Promise<boolean>
   signIn: (email: string, password: string) => Promise<boolean>
-  signInAsGuest: (name: string) => Promise<boolean>
   signOut: () => Promise<void>
   isHost: boolean
   isPlayer: boolean
@@ -22,24 +20,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true
+    let unsubscribe: (() => void) | null = null
 
     const initializeAuth = async () => {
       try {
-        if (isDemoMode()) {
-          // In demo mode, check for guest user
-          const guestUser = AuthService.getGuestUser()
-          if (mounted) {
-            setUser(guestUser)
-            setLoading(false)
-          }
-          return
-        }
-
         // Try to get current user from Supabase
         const { data: currentUser } = await AuthService.getCurrentUser()
         if (mounted) {
           setUser(currentUser)
-          setLoading(false)
         }
 
         // Listen for auth changes
@@ -49,14 +37,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         })
 
-        return () => {
-          subscription?.unsubscribe()
-        }
+        unsubscribe = () => subscription?.unsubscribe()
       } catch (error) {
         console.error('Auth initialization error:', error)
         if (mounted) {
           setLoading(false)
         }
+        return
+      }
+
+      if (mounted) {
+        setLoading(false)
       }
     }
 
@@ -64,6 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false
+      unsubscribe?.()
     }
   }, [])
 
@@ -97,30 +89,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const signInAsGuest = async (name: string): Promise<boolean> => {
-    try {
-      const { data, error } = await AuthService.signInAsGuest(name)
-      if (error) {
-        console.error('Guest sign in error:', error.message)
-        return false
-      }
-      setUser(data)
-      return true
-    } catch (error) {
-      console.error('Guest sign in error:', error)
-      return false
-    }
-  }
-
   const signOut = async (): Promise<void> => {
     try {
-      if (user?.id.startsWith('guest_')) {
-        // Clear guest session
-        AuthService.clearGuestSession()
-      } else {
-        // Sign out from Supabase
-        await AuthService.signOut()
-      }
+      await AuthService.signOut()
       setUser(null)
     } catch (error) {
       console.error('Sign out error:', error)
@@ -132,7 +103,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     signUp,
     signIn,
-    signInAsGuest,
     signOut,
     isHost: user?.role === 'host',
     isPlayer: user?.role === 'player',

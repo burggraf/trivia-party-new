@@ -193,41 +193,4 @@ export class AuthService {
     return !!session
   }
 
-  // Guest sign in for players (no email required)
-  static async signInAsGuest(name: string): Promise<ApiResponse<AuthUser>> {
-    try {
-      // For demo/development, create a guest session without actual auth
-      // In production, you might want to use anonymous auth or temporary tokens
-      const guestUser: AuthUser = {
-        id: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name,
-        role: 'player'
-      }
-
-      // Store guest info in localStorage for session persistence
-      localStorage.setItem('guestUser', JSON.stringify(guestUser))
-
-      return { data: guestUser, error: null }
-    } catch (error) {
-      return {
-        data: null,
-        error: { message: 'Failed to create guest session', code: 'UNKNOWN_ERROR', details: error }
-      }
-    }
-  }
-
-  // Get guest user from localStorage
-  static getGuestUser(): AuthUser | null {
-    try {
-      const guestData = localStorage.getItem('guestUser')
-      return guestData ? JSON.parse(guestData) : null
-    } catch {
-      return null
-    }
-  }
-
-  // Clear guest session
-  static clearGuestSession(): void {
-    localStorage.removeItem('guestUser')
-  }
 }

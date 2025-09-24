@@ -8,6 +8,10 @@ import { PlayerJoin } from './PlayerJoin'
 import { Leaderboard } from './Leaderboard'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { Alert, AlertDescription } from './ui/alert'
+import { RefreshCw } from 'lucide-react'
+import { GameService } from '../services/gameService'
+import type { Game } from '../types/game'
 
 type ViewType = 'auth' | 'host-menu' | 'host-create' | 'host-dashboard' | 'tv-display' | 'player-join' | 'leaderboard'
 
@@ -15,6 +19,9 @@ export function AppRouter() {
   const { user, loading, signOut, isHost, isPlayer } = useAuth()
   const [currentView, setCurrentView] = useState<ViewType>('auth')
   const [currentGameId, setCurrentGameId] = useState<string | null>(null)
+  const [currentGame, setCurrentGame] = useState<Game | null>(null)
+  const [gameLoading, setGameLoading] = useState(false)
+  const [gameError, setGameError] = useState<string | null>(null)
 
   // Check for special URLs on initial load
   React.useEffect(() => {
@@ -44,6 +51,44 @@ export function AppRouter() {
       return
     }
   }, [])
+
+  React.useEffect(() => {
+    if (!currentGameId) {
+      setCurrentGame(null)
+      setGameError(null)
+      return
+    }
+
+    let active = true
+    setGameError(null)
+    setGameLoading(true)
+
+    GameService.getGame(currentGameId)
+      .then((response) => {
+        if (!active) return
+        if (response.data) {
+          setCurrentGame(response.data)
+        } else {
+          setCurrentGame(null)
+          if (response.error) {
+            setGameError(response.error.message)
+          }
+        }
+      })
+      .catch(() => {
+        if (!active) return
+        setCurrentGame(null)
+        setGameError('Failed to load game')
+      })
+      .finally(() => {
+        if (!active) return
+        setGameLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [currentGameId])
 
   // Auto-redirect based on user role when user changes
   React.useEffect(() => {
@@ -178,6 +223,15 @@ export function AppRouter() {
         )
 
       case 'host-dashboard':
+        if (!currentGameId) {
+          return (
+            <div className="max-w-3xl mx-auto p-6">
+              <Alert variant="destructive">
+                <AlertDescription>No active game selected. Create or select a game first.</AlertDescription>
+              </Alert>
+            </div>
+          )
+        }
         return (
           <div className="max-w-7xl mx-auto p-6">
             <HostDashboard
@@ -209,10 +263,19 @@ export function AppRouter() {
         return <TVDisplay gameId={currentGameId} />
 
       case 'player-join':
+        if (!currentGameId) {
+          return (
+            <div className="max-w-md mx-auto p-6">
+              <Alert variant="destructive">
+                <AlertDescription>Enter this page using a valid join link to connect to a game.</AlertDescription>
+              </Alert>
+            </div>
+          )
+        }
         return (
           <div className="max-w-md mx-auto p-6">
-            <PlayerJoin gameId={currentGameId || 'demo-game-123'} onJoined={(player, team) => {
-              setCurrentGameId(currentGameId || 'demo-game-123')
+            <PlayerJoin gameId={currentGameId} onJoined={(player, team) => {
+              setCurrentGameId(team.game_id)
               console.log(`${player.name} joined ${team.name}!`)
               // Players stay on join screen to see their team status
             }} />
@@ -220,22 +283,36 @@ export function AppRouter() {
         )
 
       case 'leaderboard':
+        if (!currentGameId) {
+          return (
+            <div className="max-w-md mx-auto p-6">
+              <Alert variant="destructive">
+                <AlertDescription>Select a game to view its leaderboard.</AlertDescription>
+              </Alert>
+            </div>
+          )
+        }
+
+        if (gameLoading || !currentGame) {
+          return (
+            <div className="flex items-center justify-center min-h-[300px]">
+              {gameLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <RefreshCw className="h-5 w-5 animate-spin" />
+                  Loading game details...
+                </div>
+              ) : (
+                <Alert variant="destructive">
+                  <AlertDescription>{gameError || 'Game not found.'}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )
+        }
+
         return (
           <div className="max-w-4xl mx-auto p-6">
-            <Leaderboard game={{
-              id: currentGameId || 'demo-game-123',
-              title: "Trivia Game",
-              status: 'active',
-              current_round: 2,
-              current_question: 3,
-              max_rounds: 3,
-              questions_per_round: 5,
-              host_id: 'demo-host',
-              settings: {} as any,
-              created_at: new Date().toISOString(),
-              started_at: null,
-              ended_at: null
-            }} autoRefresh={true} />
+            <Leaderboard game={currentGame} autoRefresh={true} />
           </div>
         )
 
