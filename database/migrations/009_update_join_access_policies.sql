@@ -12,10 +12,8 @@ BEGIN
       AND tablename = 'games'
       AND policyname = 'anonymous_read_games'
   ) THEN
-    EXECUTE $$
-      ALTER POLICY "anonymous_read_games" ON games
-        USING (status IN ('setup', 'active', 'completed'));
-    $$;
+    EXECUTE 'ALTER POLICY "anonymous_read_games" ON games
+      USING (status IN (''setup'', ''active'', ''completed''));';
   ELSE
     RAISE NOTICE 'Policy "anonymous_read_games" does not exist, skipping ALTER.';
   END IF;
@@ -39,14 +37,12 @@ BEGIN
       AND tablename = 'teams'
       AND policyname = 'anonymous_read_teams'
   ) THEN
-    EXECUTE $$
-      ALTER POLICY "anonymous_read_teams" ON teams
-        USING (
-          game_id IN (
-            SELECT id FROM games WHERE status IN ('setup', 'active', 'completed')
-          )
-        );
-    $$;
+    EXECUTE 'ALTER POLICY "anonymous_read_teams" ON teams
+      USING (
+        game_id IN (
+          SELECT id FROM games WHERE status IN (''setup'', ''active'', ''completed'')
+        )
+      );';
   ELSE
     RAISE NOTICE 'Policy "anonymous_read_teams" does not exist, skipping ALTER.';
   END IF;
@@ -74,14 +70,12 @@ BEGIN
       AND tablename = 'players'
       AND policyname = 'anonymous_read_players'
   ) THEN
-    EXECUTE $$
-      ALTER POLICY "anonymous_read_players" ON players
-        USING (
-          game_id IN (
-            SELECT id FROM games WHERE status IN ('setup', 'active', 'completed')
-          )
-        );
-    $$;
+    EXECUTE 'ALTER POLICY "anonymous_read_players" ON players
+      USING (
+        game_id IN (
+          SELECT id FROM games WHERE status IN (''setup'', ''active'', ''completed'')
+        )
+      );';
   ELSE
     RAISE NOTICE 'Policy "anonymous_read_players" does not exist, skipping ALTER.';
   END IF;
