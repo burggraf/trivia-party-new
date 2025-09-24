@@ -1,0 +1,358 @@
+{
+  "title": "Supabase Realtime Contracts",
+  "version": "1.0.0",
+  "description": "Real-time event schemas for trivia game communication",
+  "channels": {
+    "game:{gameId}": {
+      "description": "Main game channel for state updates",
+      "events": {
+        "game_state_changed": {
+          "description": "Game status, round, or question changed",
+          "payload": {
+            "type": "object",
+            "required": ["game_id", "status", "current_round", "current_question"],
+            "properties": {
+              "game_id": { "type": "string", "format": "uuid" },
+              "status": { "type": "string", "enum": ["setup", "active", "paused", "completed"] },
+              "current_round": { "type": "integer", "minimum": 1 },
+              "current_question": { "type": "integer", "minimum": 1 },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "triggered_by": { "type": "string", "enum": ["host", "system"] }
+            }
+          }
+        },
+        "question_displayed": {
+          "description": "New question is now visible to players",
+          "payload": {
+            "type": "object",
+            "required": ["game_id", "question", "round_number", "question_order"],
+            "properties": {
+              "game_id": { "type": "string", "format": "uuid" },
+              "game_question_id": { "type": "string", "format": "uuid" },
+              "round_number": { "type": "integer", "minimum": 1 },
+              "question_order": { "type": "integer", "minimum": 1 },
+              "question": {
+                "type": "object",
+                "properties": {
+                  "text": { "type": "string" },
+                  "category": { "type": "string" },
+                  "difficulty": { "type": "string" },
+                  "answers": { "type": "array", "items": { "type": "string" }, "minItems": 4, "maxItems": 4 }
+                }
+              },
+              "time_limit": { "type": "integer", "minimum": 0, "description": "Seconds (0 = unlimited)" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "question_completed": {
+          "description": "Question time expired or host moved to next",
+          "payload": {
+            "type": "object",
+            "required": ["game_id", "game_question_id", "correct_position"],
+            "properties": {
+              "game_id": { "type": "string", "format": "uuid" },
+              "game_question_id": { "type": "string", "format": "uuid" },
+              "correct_position": { "type": "integer", "minimum": 0, "maximum": 3 },
+              "correct_answer": { "type": "string" },
+              "team_results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "team_id": { "type": "string", "format": "uuid" },
+                    "team_name": { "type": "string" },
+                    "selected_position": { "type": "integer", "minimum": 0, "maximum": 3 },
+                    "is_correct": { "type": "boolean" },
+                    "points_earned": { "type": "integer", "minimum": 0 },
+                    "response_time": { "type": "number", "description": "Seconds from display to answer" }
+                  }
+                }
+              },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "team_answered": {
+          "description": "A team submitted an answer",
+          "payload": {
+            "type": "object",
+            "required": ["game_id", "team_id", "game_question_id"],
+            "properties": {
+              "game_id": { "type": "string", "format": "uuid" },
+              "team_id": { "type": "string", "format": "uuid" },
+              "team_name": { "type": "string" },
+              "game_question_id": { "type": "string", "format": "uuid" },
+              "submitted_by": { "type": "string", "description": "Player display name" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "leaderboard_updated": {
+          "description": "Team scores changed",
+          "payload": {
+            "type": "object",
+            "required": ["game_id", "leaderboard"],
+            "properties": {
+              "game_id": { "type": "string", "format": "uuid" },
+              "leaderboard": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "team_id": { "type": "string", "format": "uuid" },
+                    "team_name": { "type": "string" },
+                    "score": { "type": "integer", "minimum": 0 },
+                    "rank": { "type": "integer", "minimum": 1 },
+                    "correct_answers": { "type": "integer", "minimum": 0 },
+                    "total_answers": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    "team:{teamId}": {
+      "description": "Team-specific channel for internal communication",
+      "events": {
+        "member_joined": {
+          "description": "New player joined the team",
+          "payload": {
+            "type": "object",
+            "required": ["team_id", "player"],
+            "properties": {
+              "team_id": { "type": "string", "format": "uuid" },
+              "player": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string", "format": "uuid" },
+                  "display_name": { "type": "string" },
+                  "is_captain": { "type": "boolean" }
+                }
+              },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "member_left": {
+          "description": "Player left the team",
+          "payload": {
+            "type": "object",
+            "required": ["team_id", "player_id"],
+            "properties": {
+              "team_id": { "type": "string", "format": "uuid" },
+              "player_id": { "type": "string", "format": "uuid" },
+              "player_name": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "answer_locked": {
+          "description": "Team's answer has been submitted and locked",
+          "payload": {
+            "type": "object",
+            "required": ["team_id", "game_question_id", "selected_position"],
+            "properties": {
+              "team_id": { "type": "string", "format": "uuid" },
+              "game_question_id": { "type": "string", "format": "uuid" },
+              "selected_position": { "type": "integer", "minimum": 0, "maximum": 3 },
+              "submitted_by": { "type": "string", "description": "Player display name" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    "presence:game:{gameId}": {
+      "description": "Player presence tracking for game",
+      "events": {
+        "player_online": {
+          "description": "Player came online",
+          "payload": {
+            "type": "object",
+            "required": ["player_id", "display_name"],
+            "properties": {
+              "player_id": { "type": "string", "format": "uuid" },
+              "display_name": { "type": "string" },
+              "team_id": { "type": "string", "format": "uuid", "nullable": true },
+              "team_name": { "type": "string", "nullable": true },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "player_offline": {
+          "description": "Player went offline",
+          "payload": {
+            "type": "object",
+            "required": ["player_id"],
+            "properties": {
+              "player_id": { "type": "string", "format": "uuid" },
+              "display_name": { "type": "string" },
+              "last_seen": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "client_events": {
+    "host_actions": {
+      "description": "Events that hosts can trigger",
+      "events": {
+        "start_game": {
+          "channel": "game:{gameId}",
+          "description": "Host starts the game",
+          "payload": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "enum": ["start_game"] },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "display_question": {
+          "channel": "game:{gameId}",
+          "description": "Host displays next question",
+          "payload": {
+            "type": "object",
+            "required": ["action", "round_number", "question_order"],
+            "properties": {
+              "action": { "type": "string", "enum": ["display_question"] },
+              "round_number": { "type": "integer", "minimum": 1 },
+              "question_order": { "type": "integer", "minimum": 1 },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "complete_question": {
+          "channel": "game:{gameId}",
+          "description": "Host ends current question",
+          "payload": {
+            "type": "object",
+            "required": ["action", "game_question_id"],
+            "properties": {
+              "action": { "type": "string", "enum": ["complete_question"] },
+              "game_question_id": { "type": "string", "format": "uuid" },
+              "show_results": { "type": "boolean", "default": true },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "pause_game": {
+          "channel": "game:{gameId}",
+          "description": "Host pauses the game",
+          "payload": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "enum": ["pause_game"] },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "resume_game": {
+          "channel": "game:{gameId}",
+          "description": "Host resumes the game",
+          "payload": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "enum": ["resume_game"] },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "end_game": {
+          "channel": "game:{gameId}",
+          "description": "Host ends the game",
+          "payload": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "enum": ["end_game"] },
+              "show_final_results": { "type": "boolean", "default": true },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    "player_actions": {
+      "description": "Events that players can trigger",
+      "events": {
+        "join_team": {
+          "channel": "team:{teamId}",
+          "description": "Player joins a team",
+          "payload": {
+            "type": "object",
+            "required": ["action", "player_id"],
+            "properties": {
+              "action": { "type": "string", "enum": ["join_team"] },
+              "player_id": { "type": "string", "format": "uuid" },
+              "display_name": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "leave_team": {
+          "channel": "team:{teamId}",
+          "description": "Player leaves a team",
+          "payload": {
+            "type": "object",
+            "required": ["action", "player_id"],
+            "properties": {
+              "action": { "type": "string", "enum": ["leave_team"] },
+              "player_id": { "type": "string", "format": "uuid" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "error_events": {
+    "connection_error": {
+      "description": "WebSocket connection issues",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "error_type": { "type": "string", "enum": ["connection_lost", "reconnect_failed", "auth_expired"] },
+          "message": { "type": "string" },
+          "retry_count": { "type": "integer", "minimum": 0 },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "game_error": {
+      "description": "Game state or logic errors",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "error_type": { "type": "string", "enum": ["invalid_action", "game_not_found", "permission_denied", "game_ended"] },
+          "message": { "type": "string" },
+          "game_id": { "type": "string", "format": "uuid" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "subscription_patterns": {
+    "host_subscriptions": [
+      "game:{gameId}",
+      "presence:game:{gameId}"
+    ],
+    "player_subscriptions": [
+      "game:{gameId}",
+      "team:{teamId}",
+      "presence:game:{gameId}"
+    ],
+    "tv_display_subscriptions": [
+      "game:{gameId}",
+      "presence:game:{gameId}"
+    ]
+  }
+}
