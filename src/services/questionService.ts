@@ -123,31 +123,44 @@ export class QuestionService {
         randomized.answers.b,
         randomized.answers.c,
         randomized.answers.d
-      ]
+      ].map(answer => typeof answer === 'string' ? answer : '')
 
       const correctPosition = ['a', 'b', 'c', 'd'].indexOf(randomized.correct_answer)
 
-      const { data, error } = await supabase
-        .from('game_questions')
-        .insert([{
-          game_id: gameId,
-          question_id: questionId,
-          round_number: roundNumber,
-          question_order: questionNumber,
-          shuffled_answers: shuffledAnswers,
-          correct_position: correctPosition
-        }])
-        .select()
-        .single()
+      const basePayload = {
+        game_id: gameId,
+        question_id: questionId,
+        round_number: roundNumber,
+        shuffled_answers: shuffledAnswers,
+        correct_position: correctPosition
+      }
 
-      if (error) {
+      const attemptInsert = (positionField: 'question_order' | 'question_number') => (
+        supabase
+          .from('game_questions')
+          .insert([{ ...basePayload, [positionField]: questionNumber }])
+          .select()
+          .single()
+      )
+
+      let insertResult = await attemptInsert('question_order')
+
+      if (this.shouldRetryWithAlternateColumn(insertResult.error, 'question_order')) {
+        insertResult = await attemptInsert('question_number')
+      }
+
+      if (insertResult.error || !insertResult.data) {
+        const message = this.getErrorMessage(insertResult.error, 'Failed to insert game question')
+
         return {
           data: null,
-          error: { message: error.message, code: 'DATABASE_ERROR', details: error }
+          error: { message, code: 'DATABASE_ERROR', details: insertResult.error ?? undefined }
         }
       }
 
-      return { data, error: null }
+      const normalizedRecord = this.normalizeGameQuestionRecord(insertResult.data, questionNumber)
+
+      return { data: normalizedRecord, error: null }
     } catch (error) {
       return {
         data: null,
@@ -198,26 +211,76 @@ export class QuestionService {
   // Get game question with randomized answers
   static async getGameQuestion(gameId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<QuestionWithAnswers>> {
     try {
-      const { data, error } = await supabase
+      const { data: existing, error: fetchError } = await supabase
         .from('game_questions')
-        .select(`
-          *,
-          questions (*)
-        `)
+        .select('id')
         .eq('game_id', gameId)
-        .eq('round_number', roundNumber)
-        .eq('question_order', questionNumber)
-        .single()
 
-      if (error) {
+      if (fetchError) {
         return {
           data: null,
-          error: { message: 'Question not found', code: 'QUESTION_NOT_FOUND', details: error }
+          error: { message: fetchError.message, code: 'DATABASE_ERROR', details: fetchError }
         }
       }
 
-      const gameQuestion = data as any
-      const question = gameQuestion.questions
+      if (!existing || existing.length === 0) {
+        return { data: true, error: null }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('game_questions')
+        .delete()
+        .eq('game_id', gameId)
+
+      if (deleteError) {
+        return {
+          data: null,
+          error: { message: deleteError.message, code: 'DATABASE_ERROR', details: deleteError }
+        }
+      }
+
+      return { data: true, error: null }
+    } catch (error) {
+      return {
+        data: null,
+        error: { message: 'Failed to clear existing game questions', code: 'UNKNOWN_ERROR', details: error }
+      }
+    }
+  }
+
+  // Get game question with randomized answers
+  static async getGameQuestion(gameId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<QuestionWithAnswers>> {
+    try {
+      const fetchQuestion = (positionField: 'question_order' | 'question_number') => (
+        supabase
+          .from('game_questions')
+          .select(`
+            *,
+            questions (*)
+          `)
+          .eq('game_id', gameId)
+          .eq('round_number', roundNumber)
+          .eq(positionField, questionNumber)
+          .single()
+      )
+
+      let response = await fetchQuestion('question_order')
+
+      if (this.shouldRetryWithAlternateColumn(response.error, 'question_order')) {
+        response = await fetchQuestion('question_number')
+      }
+
+      if (response.error || !response.data) {
+        const message = this.getErrorMessage(response.error, 'Question not found')
+
+        return {
+          data: null,
+          error: { message, code: 'QUESTION_NOT_FOUND', details: response.error ?? undefined }
+        }
+      }
+
+      const normalizedRecord = this.normalizeGameQuestionRecord(response.data, questionNumber) as GameQuestion & { questions: Question }
+      const question = normalizedRecord.questions
 
       if (!question) {
         return {
@@ -227,15 +290,15 @@ export class QuestionService {
       }
 
       // Use stored shuffled answers and correct position
-      const shuffledAnswers = gameQuestion.shuffled_answers
-      const correctPosition = gameQuestion.correct_position
+      const shuffledAnswers = normalizedRecord.shuffled_answers
+      const correctPosition = normalizedRecord.correct_position
       const correctLetter = ['a', 'b', 'c', 'd'][correctPosition]
 
       const questionWithAnswers: QuestionWithAnswers = {
-        game_question_id: gameQuestion.id,
+        game_question_id: normalizedRecord.id,
         game_id: gameId,
         round_number: roundNumber,
-        question_number: questionNumber,
+        question_number: normalizedRecord.question_order,
         question: question.question,
         category: question.category,
         difficulty: question.difficulty,
@@ -246,8 +309,8 @@ export class QuestionService {
           d: shuffledAnswers[3]
         },
         correct_answer: correctLetter as 'a' | 'b' | 'c' | 'd',
-        displayed_at: gameQuestion.displayed_at,
-        time_limit: 30 // Default time limit since it's not stored in the database
+        displayed_at: normalizedRecord.displayed_at,
+        time_limit: normalizedRecord.time_limit ?? 30 // Default time limit when not stored
       }
 
       return { data: questionWithAnswers, error: null }
@@ -262,25 +325,37 @@ export class QuestionService {
   // Mark question as displayed
   static async markQuestionDisplayed(gameId: string, roundNumber: number, questionNumber: number): Promise<ApiResponse<GameQuestion>> {
     try {
-      const { data, error } = await supabase
-        .from('game_questions')
-        .update({
-          displayed_at: new Date().toISOString()
-        })
-        .eq('game_id', gameId)
-        .eq('round_number', roundNumber)
-        .eq('question_order', questionNumber)
-        .select()
-        .single()
+      const updateQuestion = (positionField: 'question_order' | 'question_number') => (
+        supabase
+          .from('game_questions')
+          .update({
+            displayed_at: new Date().toISOString()
+          })
+          .eq('game_id', gameId)
+          .eq('round_number', roundNumber)
+          .eq(positionField, questionNumber)
+          .select()
+          .single()
+      )
 
-      if (error) {
+      let response = await updateQuestion('question_order')
+
+      if (this.shouldRetryWithAlternateColumn(response.error, 'question_order')) {
+        response = await updateQuestion('question_number')
+      }
+
+      if (response.error || !response.data) {
+        const message = this.getErrorMessage(response.error, 'Failed to mark question displayed')
+
         return {
           data: null,
-          error: { message: error.message, code: 'DATABASE_ERROR', details: error }
+          error: { message, code: 'DATABASE_ERROR', details: response.error ?? undefined }
         }
       }
 
-      return { data, error: null }
+      const normalizedRecord = this.normalizeGameQuestionRecord(response.data, questionNumber)
+
+      return { data: normalizedRecord, error: null }
     } catch (error) {
       return {
         data: null,
@@ -392,36 +467,48 @@ export class QuestionService {
   // Get all questions for a game
   static async getGameQuestions(gameId: string): Promise<ApiResponse<QuestionWithAnswers[]>> {
     try {
-      const { data, error } = await supabase
-        .from('game_questions')
-        .select(`
-          *,
-          questions (*)
-        `)
-        .eq('game_id', gameId)
-        .order('round_number', { ascending: true })
-        .order('question_order', { ascending: true })
+      const fetchQuestions = (orderField: 'question_order' | 'question_number') => (
+        supabase
+          .from('game_questions')
+          .select(`
+            *,
+            questions (*)
+          `)
+          .eq('game_id', gameId)
+          .order('round_number', { ascending: true })
+          .order(orderField, { ascending: true })
+      )
 
-      if (error) {
+      let response = await fetchQuestions('question_order')
+
+      if (this.shouldRetryWithAlternateColumn(response.error, 'question_order')) {
+        response = await fetchQuestions('question_number')
+      }
+
+      if (response.error) {
+        const message = this.getErrorMessage(response.error, 'Failed to get game questions')
+
         return {
           data: null,
-          error: { message: error.message, code: 'DATABASE_ERROR', details: error }
+          error: { message, code: 'DATABASE_ERROR', details: response.error ?? undefined }
         }
       }
 
-      const questionsWithAnswers = data?.map(gameQuestion => {
-        const record = gameQuestion as GameQuestion & { questions: Question }
-        const shuffledAnswers = record.shuffled_answers || []
-        const correctLetter = ['a', 'b', 'c', 'd'][record.correct_position] as 'a' | 'b' | 'c' | 'd'
+      const questionsWithAnswers = response.data?.map(gameQuestion => {
+        const orderSource = gameQuestion as { question_order?: number | null; question_number?: number | null }
+        const fallbackOrder = orderSource.question_order ?? orderSource.question_number ?? 1
+        const normalizedRecord = this.normalizeGameQuestionRecord(gameQuestion, fallbackOrder) as GameQuestion & { questions: Question }
+        const shuffledAnswers = normalizedRecord.shuffled_answers || []
+        const correctLetter = ['a', 'b', 'c', 'd'][normalizedRecord.correct_position] as 'a' | 'b' | 'c' | 'd'
 
         return {
-          game_question_id: record.id,
+          game_question_id: normalizedRecord.id,
           game_id: gameId,
-          round_number: record.round_number,
-          question_number: record.question_order,
-          question: record.questions.question,
-          category: record.questions.category,
-          difficulty: record.questions.difficulty,
+          round_number: normalizedRecord.round_number,
+          question_number: normalizedRecord.question_order,
+          question: normalizedRecord.questions.question,
+          category: normalizedRecord.questions.category,
+          difficulty: normalizedRecord.questions.difficulty,
           answers: {
             a: shuffledAnswers[0] ?? '',
             b: shuffledAnswers[1] ?? '',
@@ -429,8 +516,8 @@ export class QuestionService {
             d: shuffledAnswers[3] ?? ''
           },
           correct_answer: correctLetter,
-          displayed_at: record.displayed_at,
-          time_limit: 30
+          displayed_at: normalizedRecord.displayed_at,
+          time_limit: normalizedRecord.time_limit ?? 30
         }
       }) || []
 
@@ -446,22 +533,32 @@ export class QuestionService {
   // Verify answer correctness using original question data
   static async verifyAnswer(gameId: string, roundNumber: number, questionNumber: number, selectedAnswer: 'a' | 'b' | 'c' | 'd'): Promise<ApiResponse<{ isCorrect: boolean; correctAnswer: string }>> {
     try {
-      const { data, error } = await supabase
-        .from('game_questions')
-        .select('correct_position')
-        .eq('game_id', gameId)
-        .eq('round_number', roundNumber)
-        .eq('question_order', questionNumber)
-        .single()
+      const fetchPosition = (positionField: 'question_order' | 'question_number') => (
+        supabase
+          .from('game_questions')
+          .select('correct_position')
+          .eq('game_id', gameId)
+          .eq('round_number', roundNumber)
+          .eq(positionField, questionNumber)
+          .single()
+      )
 
-      if (error) {
+      let response = await fetchPosition('question_order')
+
+      if (this.shouldRetryWithAlternateColumn(response.error, 'question_order')) {
+        response = await fetchPosition('question_number')
+      }
+
+      if (response.error || !response.data) {
+        const message = this.getErrorMessage(response.error, 'Question not found')
+
         return {
           data: null,
-          error: { message: 'Question not found', code: 'QUESTION_NOT_FOUND', details: error }
+          error: { message, code: 'QUESTION_NOT_FOUND', details: response.error ?? undefined }
         }
       }
 
-      const correctPosition = (data as GameQuestion).correct_position
+      const correctPosition = (response.data as GameQuestion).correct_position
       const answerIndex = ['a', 'b', 'c', 'd'].indexOf(selectedAnswer)
       const isCorrect = answerIndex === correctPosition
 
@@ -481,6 +578,61 @@ export class QuestionService {
   }
 
   // Utility: Generate hash code from string for seeded randomization
+  private static normalizeGameQuestionRecord(record: Record<string, unknown>, fallbackOrder: number): GameQuestion {
+    const recordWithFields = record as {
+      question_order?: number | null
+      question_number?: number | null
+      shuffled_answers?: unknown
+      time_limit?: number | null
+    }
+
+    const normalizedOrder = recordWithFields.question_order ?? recordWithFields.question_number ?? fallbackOrder
+    const rawAnswers = Array.isArray(recordWithFields.shuffled_answers) ? recordWithFields.shuffled_answers : []
+    const sanitizedAnswers = [0, 1, 2, 3].map(index => {
+      const value = rawAnswers[index]
+      return typeof value === 'string' ? value : ''
+    })
+
+    return {
+      ...record,
+      question_order: normalizedOrder,
+      question_number: recordWithFields.question_number ?? normalizedOrder,
+      shuffled_answers: sanitizedAnswers,
+      time_limit: recordWithFields.time_limit ?? null
+    } as GameQuestion
+  }
+
+  private static getErrorMessage(error: unknown, fallback: string): string {
+    if (error && typeof error === 'object') {
+      const maybeMessage = (error as { message?: unknown }).message
+      if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+        return maybeMessage
+      }
+    }
+
+    if (typeof error === 'string' && error.trim().length > 0) {
+      return error
+    }
+
+    return fallback
+  }
+
+  private static shouldRetryWithAlternateColumn(error: unknown, column: string): boolean {
+    if (!error) {
+      return false
+    }
+
+    const errorWithMetadata = error as { code?: unknown; message?: unknown }
+    const code = typeof errorWithMetadata?.code === 'string' ? errorWithMetadata.code as string : ''
+    const message = typeof errorWithMetadata?.message === 'string' ? errorWithMetadata.message as string : ''
+    const lowered = message.toLowerCase()
+
+    return code === '42703' ||
+      lowered.includes(`column "${column.toLowerCase()}`) ||
+      lowered.includes(`column '${column.toLowerCase()}`) ||
+      lowered.includes(`${column.toLowerCase()} does not exist`)
+  }
+
   private static hashCode(str: string): number {
     let hash = 0
     for (let i = 0; i < str.length; i++) {
