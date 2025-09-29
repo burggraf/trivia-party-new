@@ -71,11 +71,10 @@
 
 ## Phase 3.5: Polish
 - [ ] T019 [P] Unit tests for validation in tests/unit/test_validation.py
-- [ ] T020 Performance tests (<200ms UI, <100ms DB queries)
+- [ ] T020 Performance tests (<200ms)
 - [ ] T021 [P] Update docs/api.md
 - [ ] T022 Remove duplication
-- [ ] T023 Constitutional compliance validation (test coverage >85%, security checks)
-- [ ] T024 Run manual-testing.md
+- [ ] T023 Run manual-testing.md
 
 ## Dependencies
 - Tests (T004-T007) before implementation (T008-T014)
